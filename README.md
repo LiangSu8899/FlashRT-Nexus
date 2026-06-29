@@ -30,19 +30,34 @@ authoritative protocol boundary. Design rationale lives in the `capsule_paper` r
 | `core/include/capsule/capsule.h` | the C ABI — the frozen-after-v1 protocol boundary |
 | `core/src/capsule.cpp` | reference implementation of Capsule + Drive over the backend seam |
 | `backends/stub/` | a host-memory backend (malloc + memcpy) so the core builds/tests with no GPU |
+| `backends/flashrt/` | the real backend: implements the seam over `libflashrt_exec` + CUDA (P1) |
 | `tests/test_core.cpp` | P0 acceptance: snapshot/restore/restore_into/regions/tier_move/serialize/load + fingerprint guard + fire/drive_tick/swap |
+| `tests/test_flashrt_gpu.cpp` | GPU smoke: drives a captured graph + capsule snapshot/restore through the core over the FlashRT backend (no model) |
 
-The real GPU backend (`backends/flashrt/`, implementing the seam against `libflashrt_exec`) and the
-L2 schedulers/modes land in later phases — see the rollout in `Capsule_Core_Spec`.
+The L2 schedulers/modes land in later phases — see the rollout in `Capsule_Core_Spec`.
 
 ## Build & test
+
+The zero-dependency core + stub (P0), runnable anywhere with a C++17 compiler:
 
 ```sh
 cmake -S . -B build && cmake --build build -j
 ctest --test-dir build --output-on-failure      # or: ./build/test_core
 ```
 
-No third-party dependencies; needs only a C++17 compiler.
+The FlashRT backend (P1) is opt-in and needs CUDA + a built `libflashrt_exec`:
+
+```sh
+cmake -S . -B build -DCAPSULE_BUILD_FLASHRT_BACKEND=ON -DFLASHRT_EXEC_DIR=<FlashRT>/exec
+cmake --build build -j
+./build/test_flashrt_gpu        # requires a GPU; run in-container
+```
+
+`FlashRT is consumed unchanged`: the adapter executes via `frt_graph_replay` and shares the
+frontend's streams via `frt_ctx_wrap_stream`, while owning capsule backing memory, host buffers,
+streams, and events through raw CUDA (the public frt ABI has no per-buffer free, host buffers, or
+non-blocking event query — all of which the core needs). The adapter is L0 and may depend on CUDA;
+only the L1 core is zero-dependency.
 
 ## The red line (constraints)
 

@@ -27,3 +27,28 @@ enable_testing()
 add_executable(test_core tests/test_core.cpp)
 target_link_libraries(test_core PRIVATE capsule_core capsule_stub_backend)
 add_test(NAME core COMMAND test_core)
+
+# ---- L0: FlashRT exec backend (optional; needs CUDA + libflashrt_exec) ------
+# Configure with:
+#   -DCAPSULE_BUILD_FLASHRT_BACKEND=ON -DFLASHRT_EXEC_DIR=/path/to/FlashRT/exec
+# The GPU smoke test runs in-container on a real GPU; it is built, not auto-run.
+option(CAPSULE_BUILD_FLASHRT_BACKEND "Build the FlashRT exec backend" OFF)
+if(CAPSULE_BUILD_FLASHRT_BACKEND)
+  find_package(CUDAToolkit REQUIRED)
+  set(FLASHRT_EXEC_DIR "" CACHE PATH "Path to FlashRT exec/ (include/flashrt/exec.h + a built libflashrt_exec)")
+  if(NOT FLASHRT_EXEC_DIR)
+    message(FATAL_ERROR "Set -DFLASHRT_EXEC_DIR=<FlashRT>/exec")
+  endif()
+  find_library(FLASHRT_EXEC_LIB flashrt_exec REQUIRED
+    HINTS "${FLASHRT_EXEC_DIR}/build" "${FLASHRT_EXEC_DIR}/build_ctr" "${FLASHRT_EXEC_DIR}")
+
+  add_library(capsule_flashrt_backend STATIC backends/flashrt/flashrt_backend.cpp)
+  target_include_directories(capsule_flashrt_backend
+    PUBLIC  backends/flashrt
+    PRIVATE core/include "${FLASHRT_EXEC_DIR}/include")
+  target_link_libraries(capsule_flashrt_backend PUBLIC capsule_core CUDA::cudart "${FLASHRT_EXEC_LIB}")
+
+  add_executable(test_flashrt_gpu tests/test_flashrt_gpu.cpp)
+  target_include_directories(test_flashrt_gpu PRIVATE "${FLASHRT_EXEC_DIR}/include")
+  target_link_libraries(test_flashrt_gpu PRIVATE capsule_core capsule_flashrt_backend CUDA::cudart "${FLASHRT_EXEC_LIB}")
+endif()
