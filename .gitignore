@@ -1,0 +1,10 @@
+/build/
+/build-*/
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+test_core
+.cache/
+compile_commands.json
