@@ -1,72 +1,138 @@
 # capsule
 
-A sovereign, **zero-dependency** C++ core that *defines* inference for physical AI:
-**replay a captured graph over named state buffers; the state is a first-class object you can
-snapshot, restore, branch, and move; an imperative loop decides which graph fires, on which stream,
-when — and can interrupt at graph boundaries.**
+**A sovereign, zero-dependency execution-state runtime for physical-AI serving.**
+Checkpoint, restore, fork, and move *live inference state* — and drive multi-graph, multi-model,
+interruptible inference from an imperative loop — over any kernel backend.
 
-Everything else — schedulers, protocols, modes, transport, and the GPU backend itself — is a
-**pluggable upper layer that adapts *into* the core**. The core executes; the upper layers decide.
-The core holds; the framework lives above it.
+<p align="center">
+  | <a href="https://arxiv.org/abs/2606.20537"><b>Paper: Execution-State Capsules</b></a>
+  | <a href="https://github.com/LiangSu8899/FlashRT"><b>Backend: FlashRT</b></a> |
+</p>
 
-## Layering
+---
+
+## What this is
+
+Mainstream LLM serving is built around a **request pipeline**: tokenize → scheduler → continuous
+batcher → paged-KV manager → model runner. That shape is optimal for many-tenant, high-throughput
+datacenter LLM serving — and a poor fit for **physical AI**, where the workload is **low-latency,
+small-batch, high-frequency, multi-model, often on-device, and interruptible**.
+
+`capsule` defines a different model of inference:
+
+> **Inference is replay of a captured graph over named state buffers. The state is a first-class
+> object you can `snapshot`, `restore`, `fork`, and `move`. An imperative loop decides which graph
+> fires, on which stream, when — and can interrupt at graph boundaries.**
+
+State becomes central; the pipeline becomes trivial (fire a replay). This is the engineering
+realization of the paper *Execution-State Capsules* (arXiv:2606.20537).
+
+## The capsule — one mechanism, four verbs
+
+A **capsule** is the full, restorable execution state at a committed boundary — a fixed set of named
+buffers (KV / recurrent / conv state / diffusion seed / scales / metadata), frozen as an object.
 
 ```
- L3  ecosystem      agents · lerobot · PKU · omni · robot products      (compose / speak protocol)
- L2  framework      schedulers (robot-async / multi-model / multi-hardware) · state-services
-                    (CapsuleStore / Session) · adapters (transport / backends) · modes   [pluggable]
- L1  capsule CORE   Capsule + imperative Drive verbs + Schedule-data + backend seam   [this repo; zero dep]
- L0  backends       flashrt (first) · raw-cuda · cpu-edge · stub (tests)              (implement the seam)
+   cold once                snapshot                 restore (one copy)            fork
+   ┌──────────────┐        ┌──────────┐             ┌────────────┐             ┌──────────┐
+   │ build state  │  ────▶ │ CAPSULE  │── restore ─▶│ warm start │      ┌─────▶│ branch 1 │
+   │ (prefix /    │        │ (frozen, │             └────────────┘      │      └──────────┘
+   │  episode /   │        │  movable)│── restore ─▶│ another set│ ─────┤
+   │  context)    │        └──────────┘             └────────────┘      └─────▶│ branch 2 │
+   └──────────────┘             │ tier / ship                                  └──────────┘
+                        GPU ↔ host RAM ↔ disk ↔ another node
 ```
 
-The core is the spec in [`core/include/capsule/capsule.h`](core/include/capsule/capsule.h) — the
-authoritative protocol boundary. Design rationale lives in the `capsule_paper` repo
-(`Capsule_Core_Spec`, `Capsule_Serving_Design`, `Capsule_Serving_Integration`).
+- **snapshot** — freeze a boundary (to GPU, host RAM, or disk).
+- **restore** — copy it back into live buffers and keep going (warm start, undo, episode reset).
+- **fork** — restore one boundary into N live sets (tree-of-thought, best-of-N, parallel hypotheses).
+- **move** — serialize and ship a capsule to another node (cloud-edge hand-off, migration).
 
-## What is here (P0)
+The same mechanism serves an LLM agent's warm start, a VLA diffusion policy's episode reset, a
+planner→actor hand-off, and a voice assistant's barge-in. Every capsule is stamped with a backend
+fingerprint (`{weights, quant, kernel, arch}`); `restore` refuses on mismatch.
 
-| path | what |
-|---|---|
-| `core/include/capsule/capsule.h` | the C ABI — the frozen-after-v1 protocol boundary |
-| `core/src/capsule.cpp` | reference implementation of Capsule + Drive over the backend seam |
-| `backends/stub/` | a host-memory backend (malloc + memcpy) so the core builds/tests with no GPU |
-| `backends/flashrt/` | the real backend: implements the seam over `libflashrt_exec` + CUDA (P1) |
-| `tests/test_core.cpp` | P0 acceptance: snapshot/restore/restore_into/regions/tier_move/serialize/load + fingerprint guard + fire/drive_tick/swap |
-| `tests/test_flashrt_gpu.cpp` | GPU smoke: drives a captured graph + capsule snapshot/restore through the core over the FlashRT backend (no model) |
+## Architecture — the core executes, upper layers decide
 
-The L2 schedulers/modes land in later phases — see the rollout in `Capsule_Core_Spec`.
+```
+ L3  ecosystem     agents · lerobot · robotics · omni · edge products       (compose / speak protocol)
+ L2  framework     schedulers (robot-async · multi-model · multi-hardware) · state-services
+                   (capsule store · session) · transport · modes                       [pluggable]
+ L1  capsule CORE  Capsule + imperative Drive verbs + Schedule-data + backend seam   [this repo · ZERO dep]
+ L0  backends      FlashRT (first) · raw-CUDA · CPU-edge · future                  (implement the seam)
+```
 
-## Build & test
+- **The core (L1) depends on nothing** — not on a GPU runtime, not on Python. It links an abstract
+  backend seam (vtable), so backends adapt *into* it. It owns **no loop and no thread**; the loop is
+  always a scheduler (L2). Hot-path verbs do not allocate and do not lock.
+- **Kernel-agnostic.** The core never sees a kernel. A backend's graph may contain any mix of
+  HF kernels, FlashInfer, TileLang, cuBLAS, or hand-written CUDA — the only requirement is that the
+  unit is replayable (a captured/adopted CUDA graph, or eager re-launch). A step that must return to
+  the host (sampling, accept/reject, dynamic routing) simply becomes its own imperatively-fired stage.
+- **Schedulers are pluggable.** The framework ships robot-async / multi-model / multi-hardware
+  schedulers; integrators swap or write their own. The core never depends on them.
 
-The zero-dependency core + stub (P0), runnable anywhere with a C++17 compiler:
+The authoritative spec is the C ABI header [`core/include/capsule/capsule.h`](core/include/capsule/capsule.h)
+and [`docs/Capsule_Core_Spec_EN.md`](docs/Capsule_Core_Spec_EN.md) ([中文](docs/Capsule_Core_Spec_ZH.md)).
+Design rationale: [`docs/Capsule_Serving_Design_EN.md`](docs/Capsule_Serving_Design_EN.md); how it
+references FlashRT: [`docs/Capsule_Serving_Integration_EN.md`](docs/Capsule_Serving_Integration_EN.md).
+
+## Status
+
+| phase | what | state |
+|---|---|---|
+| **P0** | zero-dependency core C ABI + reference impl + host stub backend + acceptance test | **done** — 28/28 checks, builds with no third-party dep |
+| **P1** | FlashRT backend (`backends/flashrt/`, over `libflashrt_exec` + CUDA) | **done** — GPU smoke 12/12 (capture/replay + capsule snapshot/restore/restore_into across tiers + fingerprint guard) |
+| P2 | first L2 scheduler + agent mode; warm-start over a real model | next |
+| P3 | robot-async + multi-model schedulers (rollout / planner→actor) | planned |
+| P4 | multi-hardware scheduler + cloud-edge capsule ship | planned |
+
+## Quickstart
+
+The core + stub (no GPU, no third-party dependency — needs only a C++17 compiler):
 
 ```sh
 cmake -S . -B build && cmake --build build -j
-ctest --test-dir build --output-on-failure      # or: ./build/test_core
+ctest --test-dir build --output-on-failure
 ```
 
-The FlashRT backend (P1) is opt-in and needs CUDA + a built `libflashrt_exec`:
+The FlashRT backend (needs CUDA + a built `libflashrt_exec`):
 
 ```sh
 cmake -S . -B build -DCAPSULE_BUILD_FLASHRT_BACKEND=ON -DFLASHRT_EXEC_DIR=<FlashRT>/exec
-cmake --build build -j
-./build/test_flashrt_gpu        # requires a GPU; run in-container
+cmake --build build -j && ./build/test_flashrt_gpu      # requires a GPU
 ```
 
-`FlashRT is consumed unchanged`: the adapter executes via `frt_graph_replay` and shares the
-frontend's streams via `frt_ctx_wrap_stream`, while owning capsule backing memory, host buffers,
-streams, and events through raw CUDA (the public frt ABI has no per-buffer free, host buffers, or
-non-blocking event query — all of which the core needs). The adapter is L0 and may depend on CUDA;
-only the L1 core is zero-dependency.
+## Relationship to FlashRT
 
-## The red line (constraints)
+[FlashRT](https://github.com/LiangSu8899/FlashRT) is the inference engine — hand-written kernels
+composed into static CUDA graphs, with a minimal execution contract (`libflashrt_exec`). `capsule`
+is the serving layer *above* it: it consumes FlashRT **unchanged** as its first backend and adds the
+state + schedule + lifecycle runtime. FlashRT stays a backend; `capsule` is backend-agnostic.
 
-- The core depends on **nothing**; it links an abstract backend vtable, not a backend.
-- The core owns **no loop and no thread**; the loop is always an upper layer (a scheduler).
-- Hot-path verbs (`cap_fire` / `cap_swap` / `cap_sync` / `cap_capsule_ready`) **do not allocate and do
-  not lock**. One `cap_ctx` is driven by one thread.
-- The core encodes **no policy** — no scheduler, KV manager, protocol, batching, or eviction.
-- Only opaque handles, POD structs, byte buffers, and the backend vtable cross the C ABI. No C++
-  types, no exceptions.
-- After v1 the ABI is **frozen**: additive only (append functions / enum values, bump
-  `CAP_ABI_VERSION` + the vtable `struct_size`).
+## Non-goals
+
+`capsule` is mechanism, not policy. It is **not** a scheduler, a KV/paged-memory manager, a compiler,
+a protocol, or a batching engine — those are pluggable upper layers or live elsewhere. The core
+encodes no policy, owns no GPU memory it didn't allocate for a capsule, spawns no thread, and (after
+v1) freezes its ABI to additive-only. See the non-goals manifesto in
+[`docs/Capsule_Core_Spec_EN.md`](docs/Capsule_Core_Spec_EN.md#6-what-we-dont-do-non-goals--the-negative-space).
+
+## Citation
+
+```bibtex
+@misc{su2026executionstatecapsules,
+  title={Execution-State Capsules: Graph-Bound Execution-State Checkpoint and Restore for Low-Latency, Small-Batch, On-Device Physical-AI Serving},
+  author={Liang Su},
+  year={2026},
+  eprint={2606.20537},
+  archivePrefix={arXiv},
+  primaryClass={cs.LG},
+  doi={10.48550/arXiv.2606.20537},
+  url={https://arxiv.org/abs/2606.20537},
+}
+```
+
+## License
+
+Apache License 2.0 — see [LICENSE](LICENSE).
