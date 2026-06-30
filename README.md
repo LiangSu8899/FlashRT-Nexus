@@ -76,6 +76,10 @@ buffers (KV / recurrent / conv state / diffusion seed / scales / metadata), froz
 into N live sets · **move** serialize and ship to another node. Every capsule is stamped with a backend
 fingerprint (`{weights, quant, kernel, arch}`); `restore` refuses on mismatch.
 
+These verbs map to the core C ABI as: snapshot → `cap_snapshot`; restore → `cap_restore`; fork →
+`cap_restore_into` (into N caller-supplied live sets); move → `cap_serialize` / `cap_load` (+ `cap_tier_move`
+for GPU↔host↔disk). `fork` and `move` are compositions over those primitives, not distinct ABI calls.
+
 ## Architecture — the core executes, upper layers decide
 
 - **The core depends on nothing** — not on a GPU runtime, not on Python. It links an abstract backend
@@ -130,6 +134,11 @@ Nexus's core is mechanism, not policy. It is **not** a scheduler, a KV/paged-mem
 a protocol, or a batching engine — those are pluggable upper layers or live elsewhere. The core encodes
 no policy, owns no GPU memory it didn't allocate for a capsule, spawns no thread, and (after v1) freezes
 its ABI to additive-only.
+
+## Contributing
+
+The project invariants (the red line), layering, naming conventions, ABI-stability policy, and build
+gates are in [CONTRIBUTING.md](CONTRIBUTING.md). It is the contract every change is held to.
 
 ## Citation
 

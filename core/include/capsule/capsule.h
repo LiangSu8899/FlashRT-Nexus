@@ -25,12 +25,15 @@ extern "C" {
 #define CAP_ABI_VERSION 1u
 
 /* ---- opaque handles ------------------------------------------------------ */
-typedef struct cap_ctx_s*     cap_ctx;      /* core context: binds ONE backend  */
-typedef struct cap_capsule_s* cap_capsule;  /* a frozen, restorable state object */
-typedef void* cap_buffer;                   /* backend-minted named memory       */
-typedef void* cap_graph;                    /* backend-minted replayable graph   */
-typedef void* cap_event;                    /* backend-minted cross-stream event */
-typedef uint64_t cap_shape_key;             /* opaque (B, S, ...) variant key    */
+typedef struct cap_ctx_s*     cap_ctx;      /* core context: binds ONE backend       */
+typedef struct cap_capsule_s* cap_capsule;  /* a frozen, restorable state object      */
+/* Backend-minted handles. Distinct opaque pointer types (not void*) so the ABI is
+ * type-safe: a buffer cannot be passed where a graph/event is expected. The backend
+ * casts its own concrete type to/from these. */
+typedef struct cap_buffer_s* cap_buffer;    /* backend-minted named memory            */
+typedef struct cap_graph_s*  cap_graph;     /* backend-minted replayable graph         */
+typedef struct cap_event_s*  cap_event;     /* backend-minted cross-stream event       */
+typedef uint64_t cap_shape_key;             /* opaque (B, S, ...) variant key          */
 
 /* ---- enums --------------------------------------------------------------- */
 enum cap_space  { CAP_DEV = 0, CAP_HOST = 1 };
