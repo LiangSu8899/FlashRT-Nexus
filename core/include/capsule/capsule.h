@@ -37,6 +37,9 @@ typedef uint64_t cap_shape_key;             /* opaque (B, S, ...) variant key   
 
 /* ---- enums --------------------------------------------------------------- */
 enum cap_space  { CAP_DEV = 0, CAP_HOST = 1 };
+/* L1 backing tiers are GPU (device) and HOST (host memory). CAP_TIER_DISK is
+ * RESERVED for L2 store semantics (persistence/eviction) and currently behaves
+ * as HOST at L1 — do not treat it as a guaranteed L1 disk tier before 1.0. */
 enum cap_tier   { CAP_TIER_GPU = 0, CAP_TIER_HOST = 1, CAP_TIER_DISK = 2 };
 enum cap_trigger{ CAP_EVERY = 0, CAP_ON_EVENT = 1, CAP_ON_DEMAND = 2 };
 enum cap_status {
@@ -114,10 +117,15 @@ void     cap_ctx_destroy(cap_ctx);
 uint64_t cap_ctx_fingerprint(cap_ctx);
 
 /* ---- Capsule: state as a first-class, movable object --------------------- *
- * All ops take a stream and are async; poll completion with cap_capsule_ready. */
+ * Async completion model (precise — do not over-read):
+ *   - All ops issue their copies on the caller's `stream` and complete in stream
+ *     order. The caller observes completion with cap_sync(stream) or its own event.
+ *   - cap_capsule_ready reports ONLY that the capsule's backing copy is finished
+ *     (the snapshot/load write) — it does NOT track a subsequent restore/restore_into/
+ *     tier_move. For those, the completion signal is the stream (cap_sync / event). */
 cap_capsule cap_snapshot     (cap_ctx, const cap_boundary*, int tier, int stream);
-int         cap_capsule_ready(cap_ctx, cap_capsule);                  /* non-blocking: 0 ready, >0 pending, <0 err */
-int         cap_restore      (cap_ctx, cap_capsule, int stream);      /* into ORIGIN live buffers                  */
+int         cap_capsule_ready(cap_ctx, cap_capsule);   /* backing-copy readiness only; non-blocking: 0 ready, >0 pending, <0 err */
+int         cap_restore      (cap_ctx, cap_capsule, int stream);      /* into ORIGIN live buffers; completion = stream-ordered */
 int         cap_restore_into (cap_ctx, cap_capsule, const cap_region* dst, int n, int stream); /* branch / receive */
 int         cap_regions      (cap_ctx, cap_capsule, cap_region_view* out, int* n); /* out=NULL -> count only       */
 int         cap_tier_move    (cap_ctx, cap_capsule, int to_tier, int stream);
@@ -126,8 +134,8 @@ cap_capsule cap_load         (cap_ctx, const void* blob, size_t len);         /*
 void        cap_capsule_drop (cap_ctx, cap_capsule);
 
 /* ---- Drive: imperative verbs (the LOOP is an upper layer) ---------------- */
-int cap_fire      (cap_ctx, const cap_stage*);                       /* one replay (alloc-free) */
-int cap_drive_tick(cap_ctx, const cap_schedule*, uint64_t clock, int* failed_stage); /* thin helper */
+int cap_fire      (cap_ctx, const cap_stage*);                       /* one replay (alloc-free hot-path verb) */
+int cap_drive_tick(cap_ctx, const cap_schedule*, uint64_t clock, int* failed_stage); /* convenience helper; MAY allocate — not a zero-alloc hot-path verb */
 int cap_swap      (cap_ctx, cap_buffer dst, const void* src, size_t n, int stream);  /* µs CONTENT overwrite */
 int cap_sync      (cap_ctx, int stream);
 

@@ -16,6 +16,8 @@ namespace {
 
 constexpr uint32_t CAP_MAGIC = 0x43415053u; /* 'CAPS' */
 constexpr uint32_t CAP_BLOB_VERSION = 1u;
+constexpr size_t   CAP_BLOB_HEADER  = 32;     /* magic+ver+fp+tier+n+meta_len */
+constexpr uint32_t CAP_MAX_REGIONS  = 1u << 20; /* sanity bound on untrusted n_regions */
 
 struct RegionStore {
     cap_buffer backing;      /* core-owned copy of the state             */
@@ -186,40 +188,48 @@ int cap_serialize(cap_ctx c, cap_capsule cap, void* out, size_t* len) {
     return CAP_OK;
 }
 
+/* Parses an UNTRUSTED, deployment-bound blob. All bounds are checked against a
+ * running `avail` byte counter (never via attacker-controlled pointer arithmetic,
+ * which could overflow). Trailing bytes are rejected. */
 cap_capsule cap_load(cap_ctx c, const void* blob, size_t len) {
-    if (!c || !blob || len < 32) return nullptr;
+    if (!c || !blob || len < CAP_BLOB_HEADER) return nullptr;
     const unsigned char* p = (const unsigned char*)blob;
-    const unsigned char* end = p + len;
     auto get32 = [&](uint32_t& v){ memcpy(&v, p, 4); p += 4; };
     auto get64 = [&](uint64_t& v){ memcpy(&v, p, 8); p += 8; };
     uint32_t magic, ver, n, tier; uint64_t fp, meta_len;
     get32(magic); get32(ver); get64(fp); get32(tier); get32(n); get64(meta_len);
     if (magic != CAP_MAGIC || ver != CAP_BLOB_VERSION) return nullptr;
-    if (fp != c->be.fingerprint(c->be.self)) return nullptr;   /* fingerprint guard */
+    if (fp != c->be.fingerprint(c->be.self)) return nullptr;       /* fingerprint guard */
+    if (n > CAP_MAX_REGIONS) return nullptr;                        /* sanity bound      */
 
-    if (p + (size_t)n * 8 + meta_len > end) return nullptr;
+    size_t avail = len - CAP_BLOB_HEADER;                          /* bytes after header */
+    const size_t table = (size_t)n * 8;
+    if (table > avail) return nullptr;
     std::vector<uint64_t> sizes(n);
     for (uint32_t i = 0; i < n; ++i) get64(sizes[i]);
+    avail -= table;
+    if (meta_len > avail) return nullptr;                          /* no-overflow check  */
 
     cap_capsule cap = new (std::nothrow) cap_capsule_s();
     if (!cap) return nullptr;
     cap->fingerprint = fp;
     cap->tier = CAP_TIER_HOST;
     cap->has_origin = false;
-    if (meta_len) { cap->meta.assign(p, p + meta_len); p += meta_len; }
+    if (meta_len) { cap->meta.assign(p, p + meta_len); p += meta_len; avail -= meta_len; }
 
     for (uint32_t i = 0; i < n; ++i) {
-        if (p + sizes[i] > end) { cap_capsule_drop(c, cap); return nullptr; }
+        if (sizes[i] > avail) { cap_capsule_drop(c, cap); return nullptr; }
         cap_buffer backing = c->be.buffer_alloc(c->be.self, "capsule", sizes[i], CAP_HOST);
         if (!backing) { cap_capsule_drop(c, cap); return nullptr; }
-        if (c->be.buffer_upload(c->be.self, backing, 0, p, sizes[i], 0) != 0) {
+        if (sizes[i] && c->be.buffer_upload(c->be.self, backing, 0, p, sizes[i], 0) != 0) {
             c->be.buffer_free(c->be.self, backing);
             cap_capsule_drop(c, cap);
             return nullptr;
         }
-        p += sizes[i];
+        p += sizes[i]; avail -= sizes[i];
         cap->regions.push_back(RegionStore{backing, nullptr, 0, (size_t)sizes[i]});
     }
+    if (avail != 0) { cap_capsule_drop(c, cap); return nullptr; }  /* reject trailing bytes */
     c->be.sync(c->be.self, 0);
     cap->ready_ev = c->be.event(c->be.self);
     if (cap->ready_ev) c->be.event_record(c->be.self, cap->ready_ev, 0);

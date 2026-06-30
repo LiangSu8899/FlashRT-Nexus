@@ -73,6 +73,23 @@ Rule of thumb: **`cap_` / `CAP_` / `capsule` name the L1 core** (the stable mech
 name the product and the L2 framework.** Backends are *capsule backends* and use the `capsule_backend_*`
 namespace. The short `cap_` prefix is the capsule C-ABI symbol namespace — do not rename it.
 
+### Backend classes (capability honesty)
+
+Not every backend offers the same fidelity. Be honest about which class a backend is, and **never claim
+a capability a backend does not actually implement**:
+
+- **Native replay / capsule backend** (e.g. FlashRT, raw-CUDA): replayable graphs over named state, with
+  real `snapshot` / `restore` / `restore_into` and stream/event semantics. This is the high-fidelity class
+  the design targets — it can checkpoint and move live execution state.
+- **Managed engine backend** (e.g. vLLM / SGLang): a remote/throughput serving engine. It may offer submit,
+  prefix-cache, batching, health, and cancel — but it does **not** provide graph-bound execution-state
+  checkpoint/restore. It is wired as a routing/fallback target, **not** as a capsule backend, and must not
+  be presented as one.
+
+When the second class lands, capabilities will be declared explicitly (a backend-advertised capability set)
+rather than inferred — that field is intentionally **not** frozen now (one real backend today; adding it
+pre-1.0 is additive). Until then, this honesty rule is the contract.
+
 ---
 
 ## 4. ABI stability

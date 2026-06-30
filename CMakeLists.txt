@@ -30,6 +30,11 @@ add_executable(test_core tests/test_core.cpp)
 target_link_libraries(test_core PRIVATE capsule_core capsule_backend_stub)
 add_test(NAME core COMMAND test_core)
 
+# Backend conformance contract, run on the host stub (any backend must pass it).
+add_executable(test_conformance tests/test_conformance.cpp)
+target_link_libraries(test_conformance PRIVATE capsule_core capsule_backend_stub)
+add_test(NAME conformance COMMAND test_conformance)
+
 # ---- L0: FlashRT exec backend (optional; needs CUDA + libflashrt_exec) ------
 # Configure with:
 #   -DCAPSULE_BUILD_FLASHRT_BACKEND=ON -DFLASHRT_EXEC_DIR=/path/to/FlashRT/exec

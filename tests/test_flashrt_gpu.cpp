@@ -11,6 +11,7 @@
 #include "capsule/capsule.h"
 #include "flashrt_backend.h"
 #include "flashrt/exec.h"
+#include "backend_conformance.h"
 
 #include <cuda_runtime.h>
 #include <cstdio>
@@ -96,7 +97,16 @@ int main() {
     }
 
     cap_capsule_drop(c, cap); cap_capsule_drop(c, capg);
-    cap_ctx_destroy(c); flashrt_backend_fini(&be);
+    cap_ctx_destroy(c);
+
+    /* run the full backend conformance contract on the real GPU backend */
+    {
+        cap_backend bef; flashrt_backend_init(&bef, ctx, 0x99999999ull);
+        int crc = run_backend_conformance(&be, &bef);
+        CHECK(crc == 0, "backend conformance suite on FlashRT (GPU)");
+        flashrt_backend_fini(&bef);
+    }
+    flashrt_backend_fini(&be);
     frt_graph_destroy(G); frt_ctx_destroy(ctx);
 
     std::printf(g_fail ? "\n== FLASHRT GPU SMOKE FAILED ==\n" : "\n== FLASHRT GPU SMOKE PASSED ==\n");
