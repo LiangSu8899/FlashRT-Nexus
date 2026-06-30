@@ -1,8 +1,10 @@
 cmake_minimum_required(VERSION 3.16)
-project(capsule LANGUAGES CXX)
+project(flashrt_nexus LANGUAGES CXX)
 
-# The Capsule core: sovereign, zero-dependency C ABI inference definition.
-# No third-party deps. The hot path links nothing but the C++ runtime.
+# FlashRT Nexus — state-first serving substrate for physical AI.
+# Its core is the "capsule" execution-state mechanism: a sovereign,
+# zero-dependency C ABI. No third-party deps; the hot path links nothing
+# but the C++ runtime. (capsule = the internal mechanism name.)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)

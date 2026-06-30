@@ -6,5 +6,9 @@
 *.dylib
 *.dll
 test_core
+test_flashrt_gpu
 .cache/
 compile_commands.json
+
+# internal working docs (design drafts) — not public-repo spec
+/internal/
