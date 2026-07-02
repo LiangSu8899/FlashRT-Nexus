@@ -67,6 +67,12 @@ typedef struct cap_model_runtime {
      * plus the after-edges, ready for cap_drive_tick. */
     cap_schedule schedule;
 
+    /* Pre-created by the adapter, one entry per stage (null where no later
+     * stage depends on it). With these, cap_model_tick is ALLOCATION-FREE —
+     * a true hot verb (cap_drive_tick remains the allocating fallback for
+     * hand-built runtimes that leave this null). */
+    cap_event* stage_events;
+
     uint64_t fingerprint;
     const char* identity;
 

@@ -173,6 +173,8 @@ int main() {
           "stage DAG survives adoption");
     CHECK(m->schedule.n_stages == 2 && m->schedule.n_deps == 1,
           "prepared schedule mirrors the DAG");
+    CHECK(m->stage_events && m->stage_events[0] && !m->stage_events[1],
+          "events pre-created for depended-upon stages (alloc-free tick)");
 
     /* ---- HOT-INPUT CONTRACT: update ports between ticks, replay tracks
      * contents, the captured graphs stay valid round after round ---- */

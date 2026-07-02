@@ -23,8 +23,28 @@ extern "C" int cap_model_fire(cap_ctx c, const cap_model_runtime* m,
 
 extern "C" int cap_model_tick(cap_ctx c, const cap_model_runtime* m) {
     if (!c || !m) return CAP_ERR_ARG;
-    int failed = -1;
-    return cap_drive_tick(c, &m->schedule, 0, &failed);
+    if (!m->stage_events) {           /* hand-built runtime: allocating fallback */
+        int failed = -1;
+        return cap_drive_tick(c, &m->schedule, 0, &failed);
+    }
+    /* alloc-free hot path: pre-created events, core verbs only */
+    cap_backend* be = m->backend;
+    for (uint64_t i = 0; i < m->n_stages; ++i) {
+        const cap_model_stage* s = &m->stages[i];
+        for (uint32_t k = 0; k < s->n_after; ++k) {
+            const uint32_t dep = s->after[k];
+            if (m->stages[dep].stream == s->stream) continue;  /* FIFO order */
+            cap_event ev = m->stage_events[dep];
+            if (!ev || be->stream_wait(be->self, s->stream, ev) != 0)
+                return CAP_ERR_BACKEND;
+        }
+        int rc = cap_fire(c, &m->schedule.stages[i]);
+        if (rc != CAP_OK) return rc;
+        if (m->stage_events[i] &&
+            be->event_record(be->self, m->stage_events[i], s->stream) != 0)
+            return CAP_ERR_BACKEND;
+    }
+    return CAP_OK;
 }
 
 extern "C" cap_backend* cap_model_backend(cap_model_runtime* m) {

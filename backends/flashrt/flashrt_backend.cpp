@@ -211,6 +211,21 @@ extern "C" cap_buffer flashrt_wrap_buffer(cap_backend* be, frt_buffer fb) {
     return (cap_buffer)b;
 }
 
+extern "C" int flashrt_graph_evict(cap_backend* be, cap_graph g, cap_shape_key key) {
+    if (!be || !be->self || !g) return -1;
+    return frt_graph_evict(((CapGraph*)g)->fg, (frt_shape_key)key) == FRT_OK ? 0 : -1;
+}
+
+extern "C" int flashrt_graph_evict_lru(cap_backend* be, cap_graph g) {
+    if (!be || !be->self || !g) return -1;
+    return frt_graph_evict_lru(((CapGraph*)g)->fg) == FRT_OK ? 0 : -1;
+}
+
+extern "C" uint64_t flashrt_graph_variant_count(cap_backend* be, cap_graph g) {
+    if (!be || !be->self || !g) return 0;
+    return (uint64_t)frt_graph_variant_count(((CapGraph*)g)->fg);
+}
+
 extern "C" int flashrt_adopt_stream(cap_backend* be, int frt_stream_id, void* native_handle) {
     Adapter* a = (Adapter*)be->self;
     if (!a || frt_stream_id < 0) return -1;

@@ -17,6 +17,7 @@ struct Impl {
     std::vector<uint32_t> after_store;            /* flattened after edges */
     std::vector<cap_stage> cap_stages;            /* schedule storage      */
     std::vector<int>       dep_pairs;             /* flattened {a,b} pairs */
+    std::vector<cap_event> stage_events;          /* alloc-free tick       */
 
     cap_model_runtime pub{};
 };
@@ -110,6 +111,19 @@ extern "C" int flashrt_adopt_model_runtime(const frt_model_runtime_v1* model,
         im->cap_stages.push_back(st);
     }
 
+    /* pre-create one event per depended-upon stage: cap_model_tick then
+     * runs allocation-free, tick after tick */
+    im->stage_events.assign(model->n_stages, nullptr);
+    for (uint64_t i = 0; i < model->n_stages; ++i)
+        for (uint32_t k = 0; k < model->stages[i].n_after; ++k) {
+            const uint32_t dep = model->stages[i].after[k];
+            if (!im->stage_events[dep]) {
+                cap_event ev = im->rb.backend.event(im->rb.backend.self);
+                if (!ev) { flashrt_model_close(&im->pub); return -4; }
+                im->stage_events[dep] = ev;
+            }
+        }
+
     cap_model_runtime& m = im->pub;
     m.backend = &im->rb.backend;
     m.ports = im->ports.data();   m.n_ports = im->ports.size();
@@ -121,6 +135,7 @@ extern "C" int flashrt_adopt_model_runtime(const frt_model_runtime_v1* model,
                           ? nullptr
                           : reinterpret_cast<const int(*)[2]>(im->dep_pairs.data());
     m.schedule.n_deps = (int)(im->dep_pairs.size() / 2);
+    m.stage_events = im->stage_events.data();
     m.fingerprint = exp->fingerprint;
     m.identity = exp->identity;
     m.self = model->self;
@@ -138,6 +153,8 @@ extern "C" int flashrt_adopt_model_runtime(const frt_model_runtime_v1* model,
 extern "C" void flashrt_model_close(cap_model_runtime* m) {
     if (!m || !m->impl) return;
     Impl* im = static_cast<Impl*>(m->impl);
+    for (cap_event ev : im->stage_events)             /* before the backend dies */
+        if (ev) im->rb.backend.event_free(im->rb.backend.self, ev);
     flashrt_runtime_binding_fini(&im->rb);            /* backend + export */
     if (im->model) im->model->release(im->model->owner);
     delete im;

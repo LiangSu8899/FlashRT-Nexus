@@ -35,6 +35,13 @@ void flashrt_backend_fini(cap_backend* be);
 cap_graph  flashrt_wrap_graph (cap_backend* be, frt_graph  fg);
 cap_buffer flashrt_wrap_buffer(cap_backend* be, frt_buffer fb);
 
+/* Graph-cache passthrough for L2 eviction/budget POLICY (mechanism lives in
+ * the exec layer). Discipline: evict only at a safe point — never while the
+ * variant may be in flight (sync the streams that replayed it first). */
+int      flashrt_graph_evict(cap_backend* be, cap_graph g, cap_shape_key key);
+int      flashrt_graph_evict_lru(cap_backend* be, cap_graph g);
+uint64_t flashrt_graph_variant_count(cap_backend* be, cap_graph g);
+
 /* Adopt a frontend-owned stream as a capsule stream index (usable in
  * cap_stage.stream / capsule verbs). Bridges the two stream namespaces: the
  * frontend's frt stream id (used for graph_replay) and its raw backend handle
