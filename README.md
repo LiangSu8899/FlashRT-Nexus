@@ -25,9 +25,9 @@ Nexus is the connecting layer that workload needs. Its through-line is **state-f
 > object you can **snapshot, restore, fork, and move**. An imperative loop decides which graph fires,
 > on which stream, when — and can interrupt at graph boundaries.
 
-State becomes the unit of control and the unit of mobility. That is the moat — and the engineering
-realization of the paper *Execution-State Capsules* (arXiv:2606.20537). Inside Nexus, that mechanism
-is named **capsule**.
+State becomes the unit of control and the unit of mobility. Nexus is the engineering realization of
+the paper *Execution-State Capsules* (arXiv:2606.20537); inside the system, that mechanism is named
+**capsule**.
 
 ## What It Connects
 
