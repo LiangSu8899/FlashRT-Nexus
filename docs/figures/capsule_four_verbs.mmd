@@ -1,0 +1,5 @@
+flowchart LR
+    B["committed boundary<br/>(a fixed set of named buffers)"] -- snapshot --> CAP["CAPSULE<br/>(frozen state)"]
+    CAP -- restore --> R["warm start<br/>+ prefill only the suffix"]
+    CAP -- fork --> F["N branches<br/>one prefill, shared prefix"]
+    CAP -- time-travel --> T["undo a turn<br/>restore an earlier boundary"]

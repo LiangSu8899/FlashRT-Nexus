@@ -61,16 +61,7 @@ is named **capsule**.
 A **capsule** is the full, restorable execution state at a committed boundary — a fixed set of named
 buffers (KV / recurrent / conv state / diffusion seed / scales / metadata), frozen as an object.
 
-```
-   build once               snapshot                 restore (one copy)            fork
-   ┌──────────────┐        ┌──────────┐             ┌────────────┐             ┌──────────┐
-   │ prefix /     │  ────▶ │ CAPSULE  │── restore ─▶│ warm start │      ┌─────▶│ branch 1 │
-   │ episode /    │        │ (frozen, │             └────────────┘      │      └──────────┘
-   │ context      │        │  movable)│── restore ─▶│ another set│ ─────┤
-   └──────────────┘        └──────────┘             └────────────┘      └─────▶│ branch 2 │
-                                │ tier / ship                                  └──────────┘
-                       GPU ↔ host RAM ↔ disk ↔ another node
-```
+![the capsule four verbs](docs/figures/capsule_four_verbs.png)
 
 **snapshot** freeze a boundary · **restore** warm-start / undo / episode-reset · **fork** one boundary
 into N live sets · **move** serialize and ship to another node. Every capsule is stamped with a backend
@@ -150,6 +141,8 @@ struct comes from a native model-runtime `.so` (`frt_runtime_open_v1`), and
 this side does not change. The adapter lives in
 [`backends/flashrt/flashrt_runtime_adapter.h`](backends/flashrt/flashrt_runtime_adapter.h).
 
+![adopting a model runtime](docs/figures/model_runtime_adoption.png)
+
 ## The tickable model: ports, stages, hot inputs
 
 A production tick also needs dynamic inputs — that is the **standard
@@ -176,6 +169,8 @@ let `cap_model_tick` run the declared order. The hot contract is pinned by
 tests: updating ports between ticks never recaptures, never allocates, never
 rebinds — replay output tracks buffer contents. Warm-phase shape-bucket
 capture goes through `prepare`, never inside a tick.
+
+Interface reference and host-layer norms: [`docs/model_runtime.md`](docs/model_runtime.md).
 
 ## Relationship to FlashRT
 

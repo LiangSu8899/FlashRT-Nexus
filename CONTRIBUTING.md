@@ -17,8 +17,11 @@ core/             L1  the capsule core: zero-dependency C ABI + reference impl  
   src/                          reference implementation
 backends/         L0  capsule backends (implement the seam); one subdir per backend
   stub/                         host-memory reference backend (tests/CI, no GPU)
-  flashrt/                      FlashRT exec backend (libflashrt_exec + CUDA)
+  flashrt/                      FlashRT exec backend + runtime/model adapters (libflashrt_exec + CUDA)
   <future>/                     raw-cuda · cpu-edge · cloud (vLLM / SGLang) ...
+host/             L2  the first framework surface: the standard model-runtime face
+  include/capsule/model_runtime.h   cap_model_runtime (ports · stage DAG · regions · verbs)
+  src/                          lookups, alloc-free tick, FFI accessors — mechanism-thin
 nexus/            L2  the framework (grows here): schedulers · modes · state-services
   schedulers/                   robot-async · multi-model · multi-hardware
   modes/                        agent · rollout · handoff · duplex
@@ -49,11 +52,21 @@ a lower layer to satisfy a higher one, that field is policy and belongs higher u
    refuses on mismatch.
 6. **Additive-only at seams** (see §4). Existing ABI, backend entrypoints, and a backend's upstream code
    are not modified in place; new behavior is new files / methods / flags.
+7. **The model-runtime face stays data-first.** `cap_model_runtime` is capsule types only — no frt
+   includes above `backends/`, no model names, no scenario fields. Ports carry the update class as a
+   promise: SWAP = the host writes the wired window, STAGED = the producer's verb accepts hot updates
+   (advertise-and-refuse is a bug), SETUP = illegal inside a tick. The hot-input contract is testable:
+   updating ports between ticks never recaptures, never allocates, never rebinds; `cap_model_tick`
+   allocates nothing (pre-created events). Graph-cache MECHANISM is the backend pass-through
+   (`flashrt_graph_evict*` / `variant_count`); eviction/budget POLICY is an L2 store, and eviction
+   happens only at safe points (never while a variant may be in flight).
 
 **PR checklist:**
 - [ ] The change lives in the correct layer (§1) and adds no policy to `core/` (§2.1).
 - [ ] `core/` gained no third-party dependency; hot-path verbs still allocate nothing and take no lock.
 - [ ] If the C ABI changed, it is additive and follows §4 (and is justified).
+- [ ] `host/` stayed capsule-typed and data-first (§2.7): no frt includes, no model names, no policy;
+      hot verbs and the tick still allocate nothing; STAGED ports actually accept hot updates.
 - [ ] Builds and tests pass (§5); correctness is preserved (bit/token/cosine-exact where applicable).
 - [ ] Commit & file hygiene (§6).
 
@@ -121,7 +134,15 @@ The FlashRT backend is opt-in (needs CUDA + a built `libflashrt_exec`); its GPU 
 ```sh
 cmake -S . -B build -DCAPSULE_BUILD_FLASHRT_BACKEND=ON -DFLASHRT_EXEC_DIR=<FlashRT>/exec
 cmake --build build -j && ./build/test_flashrt_gpu
+./build/test_runtime_adopt      # runtime-export adoption + lifetime
+./build/test_model_adopt        # model-runtime face + the hot-input contract
+FLASHRT_DIR=<FlashRT> python tests/gate_python_producer.py   # cross-language seam
 ```
+
+Changes that touch `host/` or `backends/flashrt` must keep `test_model_adopt` green — it pins the
+hot-input contract (SWAP/STAGED updates between ticks, no recapture/alloc/rebind) and the adoption
+lifetime. The real-model gates (`tests/gate_pi05_model.py`, `tests/gate_pi05_export.py`) are the
+end-to-end reference; run them when the seam or the tick semantics change.
 
 Gates a PR must meet: the zero-dep core build is green; all built tests pass; a new path produces output
 identical to the path it replaces (bit-identical / token-exact / cosine ≥ 0.999, as applicable), with a
