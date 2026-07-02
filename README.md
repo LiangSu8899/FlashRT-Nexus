@@ -102,6 +102,7 @@ The authoritative spec is the C ABI header
 | **P0** | zero-dependency core C ABI + reference impl + host stub backend + acceptance test | **done** — 28/28 checks, no third-party dep |
 | **P1** | FlashRT backend (over `libflashrt_exec` + CUDA) | **done** — GPU smoke 12/12 (capture/replay + snapshot/restore/restore_into across tiers + fingerprint guard) |
 | **P1.5** | runtime-export adoption (`frt_runtime_export_v1` → wired backend, one call) | **done** — C++ adopt test + cross-language gate (Python producer → Nexus consumer), async-ordering conformance |
+| **P1.6** | standard model-runtime face (`cap_model_runtime`: ports, stage DAG, hot inputs) | **done** — hot-input contract pinned (SWAP/STAGED updates between ticks, no recapture); real Pi0.5 per-tick dynamic input gate |
 | P2 | first scheduler + agent mode; warm-start over a real model | next |
 | P3 | robot-async + multi-model schedulers (rollout / planner→actor) | planned |
 | P4 | multi-backend (cloud engines) + multi-hardware + cloud-edge capsule ship | planned |
@@ -148,6 +149,33 @@ today the export comes from a resident Python setup process; later the same
 struct comes from a native model-runtime `.so` (`frt_runtime_open_v1`), and
 this side does not change. The adapter lives in
 [`backends/flashrt/flashrt_runtime_adapter.h`](backends/flashrt/flashrt_runtime_adapter.h).
+
+## The tickable model: ports, stages, hot inputs
+
+A production tick also needs dynamic inputs — that is the **standard
+model-runtime face**, [`host/include/capsule/model_runtime.h`](host/include/capsule/model_runtime.h)
+(the first L2 surface; schedulers and ecosystem engines code against it in
+capsule types only):
+
+```c
+cap_model_runtime* m;
+flashrt_adopt_model_runtime(model, &m);        /* frt_model_runtime_v1 in   */
+cap_ctx c = cap_ctx_create(cap_model_backend(m));
+
+int obs = cap_model_find_port(m, "obs");       /* SWAP port = wired buffer  */
+cap_swap(c, m->ports[obs].buffer, frame, n, m->stages[0].stream);  /* µs    */
+cap_model_set_input(m, prompt, text, len, -1); /* STAGED port = producer verb */
+cap_model_tick(c, m);                          /* or fire stages yourself   */
+```
+
+Ports carry the **update class** — `SWAP` windows the host writes directly
+(the microsecond lane, zero model code), `STAGED` transforms behind the
+producer's verb — and the stage DAG makes subgraphs (vision/encoder/action,
+VLM+AE splits) schedulable objects: fire them per stage across streams, or
+let `cap_model_tick` run the declared order. The hot contract is pinned by
+tests: updating ports between ticks never recaptures, never allocates, never
+rebinds — replay output tracks buffer contents. Warm-phase shape-bucket
+capture goes through `prepare`, never inside a tick.
 
 ## Relationship to FlashRT
 
