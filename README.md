@@ -8,8 +8,7 @@ FlashRT Nexus connects FlashRT replay, robot runtimes, and agent workflows throu
 
 <p align="center">
   | <a href="https://arxiv.org/abs/2606.20537"><b>Paper: Execution-State Capsules</b></a>
-  | <a href="https://github.com/flashrt-project/FlashRT"><b>FlashRT</b></a>
-  | <a href="https://github.com/Physical-Intelligence/real-time-chunking-kinetix"><b>Pi RTC reference</b></a> |
+  | <a href="https://github.com/flashrt-project/FlashRT"><b>FlashRT</b></a> |
 </p>
 
 ---
@@ -177,11 +176,10 @@ composed into static CUDA graphs, exposing the runtime/model-runtime export cont
 Nexus is the serving substrate *above* it: it consumes FlashRT **unchanged** through the FlashRT backend
 and adds the state + schedule + lifecycle control layer.
 
-The RTC action-chunk mode is informed by the Pi
-[real-time-chunking-kinetix](https://github.com/Physical-Intelligence/real-time-chunking-kinetix)
-semantics: keep the robot loop supplied with actions while the next chunk is pending, then splice at
-chunk boundaries. In this repository, RTC is kept as an L2 scheduling mode over producer-declared
-model-runtime stages and ports; model-internal guided denoising remains a FlashRT producer concern.
+The RTC action-chunk mode keeps the robot loop supplied with actions while the next chunk is pending,
+then splices at chunk boundaries. In this repository, RTC is kept as an L2 scheduling mode over
+producer-declared model-runtime stages and ports; model-internal guided denoising remains a FlashRT
+producer concern.
 
 ## Non-goals
 
@@ -209,6 +207,11 @@ gates are in [CONTRIBUTING.md](CONTRIBUTING.md). It is the contract every change
   url={https://arxiv.org/abs/2606.20537},
 }
 ```
+
+## References
+
+- [FlashRT](https://github.com/flashrt-project/FlashRT) — the FlashRT inference engine and runtime/model-runtime producer surface.
+- [Pi real-time chunking reference](https://github.com/Physical-Intelligence/real-time-chunking-kinetix) — external RTC action-chunk semantics referenced by the Nexus RTC mode.
 
 ## License
 
