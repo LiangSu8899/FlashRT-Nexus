@@ -101,6 +101,7 @@ The authoritative spec is the C ABI header
 |---|---|---|
 | **P0** | zero-dependency core C ABI + reference impl + host stub backend + acceptance test | **done** — 28/28 checks, no third-party dep |
 | **P1** | FlashRT backend (over `libflashrt_exec` + CUDA) | **done** — GPU smoke 12/12 (capture/replay + snapshot/restore/restore_into across tiers + fingerprint guard) |
+| **P1.5** | runtime-export adoption (`frt_runtime_export_v1` → wired backend, one call) | **done** — C++ adopt test + cross-language gate (Python producer → Nexus consumer), async-ordering conformance |
 | P2 | first scheduler + agent mode; warm-start over a real model | next |
 | P3 | robot-async + multi-model schedulers (rollout / planner→actor) | planned |
 | P4 | multi-backend (cloud engines) + multi-hardware + cloud-edge capsule ship | planned |
@@ -119,7 +120,34 @@ FlashRT backend (needs CUDA + a built `libflashrt_exec`):
 ```sh
 cmake -S . -B build -DCAPSULE_BUILD_FLASHRT_BACKEND=ON -DFLASHRT_EXEC_DIR=<FlashRT>/exec
 cmake --build build -j && ./build/test_flashrt_gpu      # requires a GPU
+./build/test_runtime_adopt                              # runtime-export adoption
+FLASHRT_DIR=<FlashRT> python tests/gate_python_producer.py   # cross-language seam
 ```
+
+## Adopting a model: the runtime export
+
+A FlashRT model runtime hands Nexus one struct — `frt_runtime_export_v1`
+(FlashRT `runtime/include/flashrt/runtime.h`): context, streams, graphs,
+buffers, restorable state regions, and a producer-computed identity
+fingerprint. One call wires it:
+
+```c
+flashrt_runtime_binding rb;
+flashrt_adopt_runtime_export(exp, &rb);        /* validates ABI, retains, wires */
+cap_ctx c = cap_ctx_create(&rb.backend);       /* capsules now stamped with the
+                                                  producer's fingerprint */
+cap_stage st = { flashrt_runtime_graph(&rb, "infer"), key,
+                 flashrt_runtime_stream(&rb, "main"), 0, 1, 1, CAP_EVERY };
+cap_fire(c, &st);
+cap_boundary bnd = { rb.regions, (int)rb.n_regions, NULL, 0 };
+cap_capsule cap = cap_snapshot(c, &bnd, CAP_TIER_HOST, 0);
+```
+
+Nexus never learns what the model is, who captured it, or in which language:
+today the export comes from a resident Python setup process; later the same
+struct comes from a native model-runtime `.so` (`frt_runtime_open_v1`), and
+this side does not change. The adapter lives in
+[`backends/flashrt/flashrt_runtime_adapter.h`](backends/flashrt/flashrt_runtime_adapter.h).
 
 ## Relationship to FlashRT
 

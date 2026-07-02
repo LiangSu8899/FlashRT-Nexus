@@ -49,13 +49,36 @@ if(CAPSULE_BUILD_FLASHRT_BACKEND)
   find_library(FLASHRT_EXEC_LIB flashrt_exec REQUIRED
     HINTS "${FLASHRT_EXEC_DIR}/build" "${FLASHRT_EXEC_DIR}/build_ctr" "${FLASHRT_EXEC_DIR}")
 
-  add_library(capsule_backend_flashrt STATIC backends/flashrt/flashrt_backend.cpp)
+  # The runtime-export ABI header (flashrt/runtime.h) is consumed as plain
+  # data — headers only, nothing extra to link.
+  set(FLASHRT_RUNTIME_DIR "${FLASHRT_EXEC_DIR}/../runtime" CACHE PATH
+      "Path to FlashRT runtime/ (include/flashrt/runtime.h)")
+
+  add_library(capsule_backend_flashrt STATIC
+    backends/flashrt/flashrt_backend.cpp
+    backends/flashrt/flashrt_runtime_adapter.cpp)
   target_include_directories(capsule_backend_flashrt
     PUBLIC  backends/flashrt
-    PRIVATE core/include "${FLASHRT_EXEC_DIR}/include")
+    PRIVATE core/include "${FLASHRT_EXEC_DIR}/include" "${FLASHRT_RUNTIME_DIR}/include")
   target_link_libraries(capsule_backend_flashrt PUBLIC capsule_core CUDA::cudart "${FLASHRT_EXEC_LIB}")
 
   add_executable(test_flashrt_gpu tests/test_flashrt_gpu.cpp)
   target_include_directories(test_flashrt_gpu PRIVATE "${FLASHRT_EXEC_DIR}/include")
   target_link_libraries(test_flashrt_gpu PRIVATE capsule_core capsule_backend_flashrt CUDA::cudart "${FLASHRT_EXEC_LIB}")
+
+  add_executable(test_runtime_adopt tests/test_runtime_adopt.cpp)
+  target_include_directories(test_runtime_adopt
+    PRIVATE "${FLASHRT_EXEC_DIR}/include" "${FLASHRT_RUNTIME_DIR}/include")
+  target_link_libraries(test_runtime_adopt PRIVATE capsule_core capsule_backend_flashrt CUDA::cudart "${FLASHRT_EXEC_LIB}")
+
+  # Loadable core+backend for in-process hosts (the phase-1 deployment shape:
+  # a resident setup process hands its runtime export to Nexus via dlopen/ctypes).
+  add_library(capsule_nexus_flashrt SHARED
+    core/src/capsule.cpp
+    backends/flashrt/flashrt_backend.cpp
+    backends/flashrt/flashrt_runtime_adapter.cpp)
+  target_include_directories(capsule_nexus_flashrt
+    PUBLIC  core/include backends/flashrt
+    PRIVATE "${FLASHRT_EXEC_DIR}/include" "${FLASHRT_RUNTIME_DIR}/include")
+  target_link_libraries(capsule_nexus_flashrt PUBLIC CUDA::cudart "${FLASHRT_EXEC_LIB}")
 endif()

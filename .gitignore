@@ -1,5 +1,7 @@
 /build/
 /build-*/
+/build_*/
+__pycache__/
 *.o
 *.a
 *.so

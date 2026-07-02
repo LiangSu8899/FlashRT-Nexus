@@ -35,6 +35,13 @@ void flashrt_backend_fini(cap_backend* be);
 cap_graph  flashrt_wrap_graph (cap_backend* be, frt_graph  fg);
 cap_buffer flashrt_wrap_buffer(cap_backend* be, frt_buffer fb);
 
+/* Adopt a frontend-owned stream as a capsule stream index (usable in
+ * cap_stage.stream / capsule verbs). Bridges the two stream namespaces: the
+ * frontend's frt stream id (used for graph_replay) and its raw backend handle
+ * (e.g. cudaStream_t, used for copies/events). NOT owned: never destroyed by
+ * flashrt_backend_fini. Returns the capsule stream index, or negative. */
+int flashrt_adopt_stream(cap_backend* be, int frt_stream_id, void* native_handle);
+
 #ifdef __cplusplus
 }
 #endif

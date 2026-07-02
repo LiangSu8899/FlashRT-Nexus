@@ -102,6 +102,42 @@ static inline int run_backend_conformance(cap_backend* be, cap_backend* be_forei
     CONF_CHECK(cap_load(cf, blob.data(), blob.size()) == nullptr, "foreign fingerprint: cap_load refuses");
     CONF_CHECK(cap_restore_into(cf, cap, &into, 1, s) == CAP_ERR_FINGERPRINT, "foreign fingerprint: restore refuses");
 
+    /* --- 7. async ordering: snapshot/restore are STREAM-ORDERED, not call-ordered.
+     * Keep the stream busy with large dummy copies, then enqueue a content change
+     * followed by a snapshot on the SAME stream. A backend that reads the buffer
+     * out of stream order (e.g. a blocking copy on the wrong stream) captures the
+     * stale pattern. Same test for the restore direction. --- */
+    {
+        const size_t BIG = 32u << 20;                 /* per dummy copy */
+        cap_buffer w1 = be->buffer_alloc(be->self, "w1", BIG, CAP_DEV);
+        cap_buffer w2 = be->buffer_alloc(be->self, "w2", BIG, CAP_DEV);
+        CONF_CHECK(w1 && w2, "async: scratch alloc");
+        be->buffer_upload(be->self, L, 0, known, N, s);          /* stale pattern */
+        for (int i = 0; i < 24; ++i)                              /* occupy the stream */
+            be->buffer_copy(be->self, w2, 0, w1, 0, BIG, s);
+        be->buffer_upload(be->self, L, 0, known2, N, s);         /* committed pattern */
+        cap_capsule capa = cap_snapshot(c, &bnd, CAP_TIER_HOST, s);
+        CONF_CHECK(capa != nullptr, "async: snapshot enqueued on a busy stream");
+        int rq = cap_capsule_ready(c, capa);
+        CONF_CHECK(rq == 0 || rq == 1, "async: capsule_ready is non-blocking while pending");
+        be->sync(be->self, s);
+        CONF_CHECK(cap_capsule_ready(c, capa) == 0, "async: capsule_ready after sync");
+        cap_region_view view; int nv = 1;
+        CONF_CHECK(cap_regions(c, capa, &view, &nv) == CAP_OK && nv == 1, "async: region view");
+        CONF_CHECK(std::memcmp(view.ptr, known2, N) == 0,
+                   "async: snapshot captured the stream-ordered (committed) bytes");
+        /* restore direction: dirty L, enqueue dummies, restore on the busy stream */
+        be->buffer_upload(be->self, L, 0, known, N, s);
+        for (int i = 0; i < 24; ++i)
+            be->buffer_copy(be->self, w2, 0, w1, 0, BIG, s);
+        CONF_CHECK(cap_restore(c, capa, s) == CAP_OK, "async: restore enqueued on a busy stream");
+        be->sync(be->self, s);
+        be->buffer_download(be->self, L, 0, tmp, N, s); be->sync(be->self, s);
+        CONF_CHECK(std::memcmp(tmp, known2, N) == 0, "async: restore is stream-ordered bit-exact");
+        cap_capsule_drop(c, capa);
+        be->buffer_free(be->self, w1); be->buffer_free(be->self, w2);
+    }
+
     cap_capsule_drop(c, cap); cap_capsule_drop(c, loaded);
     be->buffer_free(be->self, L); be->buffer_free(be->self, B);
     cap_ctx_destroy(cf); cap_ctx_destroy(c);

@@ -28,6 +28,7 @@ struct Adapter {
     uint64_t fingerprint;
     std::vector<cudaStream_t> streams;   /* index = capsule stream id */
     std::vector<int>          frt_ids;   /* parallel: frt stream id for replay */
+    std::vector<bool>         owned;     /* parallel: destroy at fini? (adopted = no) */
     int prio_lo = 0, prio_hi = 0;
     std::vector<CapBuf*>   wrapped_bufs;
     std::vector<CapGraph*> wrapped_graphs;
@@ -125,7 +126,7 @@ int f_stream(void* self, int priority) {
     if (cudaStreamCreateWithPriority(&s, cudaStreamNonBlocking, p) != cudaSuccess) return -1;
     int frt_id = frt_ctx_wrap_stream(a->ctx, (void*)s);
     if (frt_id < 0) { cudaStreamDestroy(s); return -1; }
-    a->streams.push_back(s); a->frt_ids.push_back(frt_id);
+    a->streams.push_back(s); a->frt_ids.push_back(frt_id); a->owned.push_back(true);
     return (int)a->streams.size() - 1;
 }
 cap_event f_event(void*) {
@@ -166,7 +167,7 @@ extern "C" int flashrt_backend_init(cap_backend* be, frt_ctx ctx, uint64_t finge
     if (cudaStreamCreateWithPriority(&s0, cudaStreamNonBlocking, 0) != cudaSuccess) { delete a; return -1; }
     int frt0 = frt_ctx_wrap_stream(ctx, (void*)s0);
     if (frt0 < 0) { cudaStreamDestroy(s0); delete a; return -1; }
-    a->streams.push_back(s0); a->frt_ids.push_back(frt0);
+    a->streams.push_back(s0); a->frt_ids.push_back(frt0); a->owned.push_back(true);
 
     be->abi_version = CAP_ABI_VERSION;
     be->struct_size = (uint32_t)sizeof(cap_backend);
@@ -188,7 +189,8 @@ extern "C" void flashrt_backend_fini(cap_backend* be) {
     if (!a) return;
     for (CapGraph* g : a->wrapped_graphs) delete g;
     for (CapBuf*   b : a->wrapped_bufs)   delete b;   /* wrappers only; frt owns the buffers */
-    for (cudaStream_t s : a->streams) cudaStreamDestroy(s);
+    for (size_t i = 0; i < a->streams.size(); ++i)
+        if (a->owned[i]) cudaStreamDestroy(a->streams[i]);   /* adopted streams stay alive */
     delete a;
     be->self = nullptr;
 }
@@ -207,4 +209,14 @@ extern "C" cap_buffer flashrt_wrap_buffer(cap_backend* be, frt_buffer fb) {
     b->bytes = frt_buffer_bytes(fb); b->space = CAP_DEV; b->owned = false;
     a->wrapped_bufs.push_back(b);
     return (cap_buffer)b;
+}
+
+extern "C" int flashrt_adopt_stream(cap_backend* be, int frt_stream_id, void* native_handle) {
+    Adapter* a = (Adapter*)be->self;
+    if (!a || frt_stream_id < 0) return -1;
+    /* native_handle may be 0: the legacy default stream is a valid handle. */
+    a->streams.push_back((cudaStream_t)native_handle);
+    a->frt_ids.push_back(frt_stream_id);
+    a->owned.push_back(false);
+    return (int)a->streams.size() - 1;
 }
