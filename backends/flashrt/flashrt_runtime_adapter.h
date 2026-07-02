@@ -4,8 +4,8 @@
  * call turns a producer-packaged model — context, streams, graphs, buffers,
  * restorable regions, identity — into a wired cap_backend plus ready-to-use
  * capsule handles. This is the ONLY entry a host needs; it never sees Python,
- * torch, or model code, and it does not care whether the export came from the
- * Python setup bridge (today) or a native model-runtime .so (later).
+ * torch, or model code. The export may be produced by the FlashRT setup bridge
+ * or by a native FlashRT model runtime.
  *
  * What adoption does:
  *   - validates abi_version/struct_size, retains the export;

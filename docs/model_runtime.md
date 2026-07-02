@@ -2,8 +2,8 @@
 
 Authoritative header: [`host/include/capsule/model_runtime.h`](../host/include/capsule/model_runtime.h).
 This is the first **L2 (host/framework) surface**: schedulers, sessions, and
-ecosystem engines code against it in capsule types only — never against a
-backend's native export or a model's pipeline.
+runtime loops code against it in capsule types only — never against the
+FlashRT export or a model's pipeline.
 
 ![adopting a model runtime](figures/model_runtime_adoption.png)
 
@@ -17,11 +17,10 @@ flashrt_model_close(m);                            /* releases everything     */
 ```
 
 One call: validates the producer ABI, retains the model, adopts the embedded
-export (backend init, streams bridged across both namespaces, graphs/buffers
-wrapped, regions materialized in contractual order), wires SWAP port windows
-as capsule buffers, prepares the stage schedule, and pre-creates the events
-that make the tick allocation-free. Other backends provide their own
-constructor for the same face; upper layers do not change.
+FlashRT export (backend init, streams bridged across both namespaces,
+graphs/buffers wrapped, regions materialized in contractual order), wires SWAP
+port windows as capsule buffers, prepares the stage schedule, and pre-creates
+the events that make the tick allocation-free.
 
 ## The struct (capsule types only)
 

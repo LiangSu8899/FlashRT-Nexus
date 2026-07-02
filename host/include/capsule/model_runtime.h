@@ -1,10 +1,9 @@
 /* capsule/model_runtime.h — the standard face of one adopted, tickable model.
  *
- * The first L2 (host/framework) surface: schedulers, sessions, and ecosystem
- * engines code against THIS, in capsule types only — never against a backend's
- * native export or a model's pipeline. A backend adapter constructs it (the
- * FlashRT one adopts frt_model_runtime_v1); other backends adapt their own
- * runtimes into the same face, and upper layers do not change.
+ * The first L2 (host/framework) surface: schedulers, sessions, and runtime
+ * loops code against THIS, in capsule types only — never against the FlashRT
+ * export or a model's pipeline. The FlashRT adapter constructs it by adopting
+ * frt_model_runtime_v1.
  *
  * Data first, verbs as sugar:
  *   ports  — every dynamic input/output with its UPDATE CLASS. SWAP ports are

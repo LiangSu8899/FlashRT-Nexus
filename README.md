@@ -2,9 +2,9 @@
 
 **A state-first serving substrate for physical AI.**
 
-FlashRT Nexus connects replayable edge backends, cloud serving engines, robot runtimes, and agent
-workflows through one **execution-state control layer** — so a system can checkpoint, restore, fork,
-and move *live inference state* across models, schedulers, and hardware.
+FlashRT Nexus connects FlashRT replay, robot runtimes, and agent workflows through one
+**execution-state control layer** — so a system can checkpoint, restore, fork, and move
+*live inference state* across schedulers and runtime loops.
 
 <p align="center">
   | <a href="https://arxiv.org/abs/2606.20537"><b>Paper: Execution-State Capsules</b></a>
@@ -15,10 +15,9 @@ and move *live inference state* across models, schedulers, and hardware.
 
 ## Why Nexus
 
-Mainstream LLM serving is built around a **request pipeline** — tokenize → scheduler → continuous
-batcher → paged-KV manager → runner — optimal for many-tenant, high-throughput datacenter LLM serving.
-**Physical AI is a different workload:** low-latency, small-batch, high-frequency, multi-model,
-often on-device, interruptible, and increasingly **split across edge, cloud, and robot**.
+Most serving stacks are built around a **request pipeline** — parse a request, enqueue it, run a
+model, return a result. **Physical AI is a different workload:** low-latency, small-batch,
+high-frequency, stateful, often on-device, and interruptible.
 
 Nexus is the connecting layer that workload needs. Its through-line is **state-first execution**:
 
@@ -30,31 +29,30 @@ State becomes the unit of control and the unit of mobility. That is the moat —
 realization of the paper *Execution-State Capsules* (arXiv:2606.20537). Inside Nexus, that mechanism
 is named **capsule**.
 
-## What it connects
+## What It Connects
 
 ```
-        ECOSYSTEM        LeRobot · OpenPI · Isaac · agent workflows · omni        (compose / speak protocol)
+        APPLICATIONS     robot control · rollout · planner/actor · agent workflows
             ▲
-            │  modes · transport (OpenAI / gRPC / ROS2 / shared-mem)
+            │  modes · host loops · transport
    ┌────────┴───────────────────────────────────────────────────────────────┐
    │  FlashRT NEXUS  —  state-first execution-state control layer             │
    │    capsule (snapshot/restore/fork/move) · imperative Drive · Schedule    │
-   │    schedulers: robot-async · multi-model · multi-backend / multi-hardware│
+   │    schedulers: robot-async · multi-model · interruption-aware loops      │
    └────────┬───────────────────────────────────────────────────────────────┘
-            │  one backend seam (vtable) — backends adapt IN
+            │  FlashRT backend seam
             ▼
-        BACKENDS    edge replayable: FlashRT   ·   cloud throughput: vLLM / SGLang
-                    raw-CUDA · CPU-edge · future
+        FlashRT     replayable graphs · named buffers · streams/events
 ```
 
-- **One execution-state control layer, many backends.** A backend implements a small seam (buffers,
-  graphs, streams, events). FlashRT — hand-written kernels in static CUDA graphs — is the first,
-  wired and GPU-validated. Cloud throughput engines (vLLM / SGLang) and other runtimes are the kind of
-  backend Nexus is built to connect next.
-- **One layer, many ecosystems.** LeRobot, OpenPI, Isaac, and agent stacks plug in above via modes and
-  transports; none of them has to know which backend or hardware is underneath.
+- **One execution-state control layer over FlashRT.** The FlashRT backend implements the seam Nexus
+  needs: buffers, graphs, streams, and events. The core then drives replay and capsules through stable
+  handles.
+- **One layer for runtime loops.** Robot control, rollout, planner/actor hand-off, and agent workflows
+  plug in above via modes and host loops; they do not need to know the model's internal graph or buffer
+  layout.
 - **State-first, everywhere.** The same capsule serves an LLM agent's warm start, a VLA policy's
-  episode reset, a planner→actor hand-off, a voice barge-in, and a cloud→edge hand-off.
+  episode reset, a planner→actor hand-off, and a voice barge-in.
 
 ## The capsule — one mechanism, four verbs
 
@@ -73,15 +71,14 @@ for GPU↔host↔disk). `fork` and `move` are compositions over those primitives
 
 ## Architecture — the core executes, upper layers decide
 
-- **The core depends on nothing** — not on a GPU runtime, not on Python. It links an abstract backend
-  seam, so backends adapt *into* it. It owns **no loop and no thread**; the loop is always a scheduler.
-  Hot-path verbs do not allocate and do not lock.
-- **Kernel-agnostic.** The core never sees a kernel. A backend's graph may mix HF kernels, FlashInfer,
+- **The core depends on nothing** — not on a GPU runtime, not on Python. FlashRT connects through the
+  backend seam. The core owns **no loop and no thread**; the loop is always a scheduler. Hot-path verbs
+  do not allocate and do not lock.
+- **Kernel-agnostic.** The core never sees a kernel. A FlashRT graph may mix HF kernels, FlashInfer,
   TileLang, cuBLAS, or hand-written CUDA — the only requirement is that the unit is replayable. A step
   that must return to the host (sampling, accept/reject, dynamic routing) becomes its own
   imperatively-fired stage.
-- **Pluggable schedulers.** Nexus ships robot-async / multi-model / multi-hardware schedulers;
-  integrators swap or write their own. The core never depends on them.
+- **Pluggable schedulers.** Nexus keeps schedulers above the core. The core never depends on them.
 
 The authoritative spec is the C ABI header
 [`core/include/capsule/capsule.h`](core/include/capsule/capsule.h). Rationale is in the paper above.
@@ -96,7 +93,6 @@ The authoritative spec is the C ABI header
 | **P1.6** | standard model-runtime face (`cap_model_runtime`: ports, stage DAG, hot inputs) | **done** — hot-input contract pinned (SWAP/STAGED updates between ticks, no recapture); real Pi0.5 per-tick dynamic input gate |
 | P2 | first scheduler + agent mode; warm-start over a real model | next |
 | P3 | robot-async + multi-model schedulers (rollout / planner→actor) | planned |
-| P4 | multi-backend (cloud engines) + multi-hardware + cloud-edge capsule ship | planned |
 
 ## Quickstart
 
@@ -135,10 +131,9 @@ cap_boundary bnd = { rb.regions, (int)rb.n_regions, NULL, 0 };
 cap_capsule cap = cap_snapshot(c, &bnd, CAP_TIER_HOST, 0);
 ```
 
-Nexus never learns what the model is, who captured it, or in which language:
-today the export comes from a resident Python setup process; later the same
-struct comes from a native model-runtime `.so` (`frt_runtime_open_v1`), and
-this side does not change. The adapter lives in
+Nexus never learns what the model is, who captured it, or in which language.
+The export may come from a resident Python setup process or from a native
+FlashRT model runtime; this side does not change. The adapter lives in
 [`backends/flashrt/flashrt_runtime_adapter.h`](backends/flashrt/flashrt_runtime_adapter.h).
 
 ![adopting a model runtime](docs/figures/model_runtime_adoption.png)
@@ -147,8 +142,8 @@ this side does not change. The adapter lives in
 
 A production tick also needs dynamic inputs — that is the **standard
 model-runtime face**, [`host/include/capsule/model_runtime.h`](host/include/capsule/model_runtime.h)
-(the first L2 surface; schedulers and ecosystem engines code against it in
-capsule types only):
+(the first L2 surface; schedulers and host loops code against it in capsule
+types only):
 
 ```c
 cap_model_runtime* m;
@@ -176,15 +171,15 @@ Interface reference and host-layer norms: [`docs/model_runtime.md`](docs/model_r
 
 [FlashRT](https://github.com/LiangSu8899/FlashRT) is the inference engine — hand-written kernels
 composed into static CUDA graphs, exposing a minimal execution contract (`libflashrt_exec`). Nexus is
-the serving substrate *above* it: it consumes FlashRT **unchanged** as its first backend and adds the
-state + schedule + lifecycle control layer. FlashRT stays a backend; Nexus is backend-agnostic.
+the serving substrate *above* it: it consumes FlashRT **unchanged** through the FlashRT backend and adds
+the state + schedule + lifecycle control layer.
 
 ## Non-goals
 
 Nexus's core is mechanism, not policy. It is **not** a scheduler, a KV/paged-memory manager, a compiler,
-a protocol, or a batching engine — those are pluggable upper layers or live elsewhere. The core encodes
-no policy, owns no GPU memory it didn't allocate for a capsule, spawns no thread, and (after v1) freezes
-its ABI to additive-only.
+a protocol, or a batching system — those are upper layers. The core encodes no policy, owns no GPU
+memory it didn't allocate for a capsule, spawns no thread, and (after v1) freezes its ABI to
+additive-only.
 
 ## Contributing
 
