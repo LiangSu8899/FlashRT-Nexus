@@ -22,6 +22,18 @@ add_library(capsule_host STATIC host/src/model_runtime.cpp)
 target_include_directories(capsule_host PUBLIC host/include)
 target_link_libraries(capsule_host PUBLIC capsule_core)
 
+# ---- L2: Nexus schedulers / state services / modes -------------------------
+add_library(nexus_l2 STATIC
+  nexus/schedulers/stage_dag.cpp
+  nexus/schedulers/stage_dag_c.cpp
+  nexus/state/graph_store.cpp
+  nexus/modes/rtc_action_chunk.cpp
+  nexus/modes/rtc_action_chunk_c.cpp)
+target_include_directories(nexus_l2
+  PUBLIC .
+  PRIVATE core/include host/include)
+target_link_libraries(nexus_l2 PUBLIC capsule_core capsule_host)
+
 # ---- L0: a host reference backend (for tests / CI; no GPU) ------------------
 add_library(capsule_backend_stub STATIC backends/stub/stub_backend.cpp)
 target_include_directories(capsule_backend_stub
@@ -39,6 +51,10 @@ add_test(NAME core COMMAND test_core)
 add_executable(test_conformance tests/test_conformance.cpp)
 target_link_libraries(test_conformance PRIVATE capsule_core capsule_backend_stub)
 add_test(NAME conformance COMMAND test_conformance)
+
+add_executable(test_nexus_l2 tests/test_nexus_l2.cpp)
+target_link_libraries(test_nexus_l2 PRIVATE nexus_l2 capsule_backend_stub)
+add_test(NAME nexus_l2 COMMAND test_nexus_l2)
 
 # ---- L0: FlashRT exec backend (optional; needs CUDA + libflashrt_exec) ------
 # Configure with:
@@ -87,11 +103,16 @@ if(CAPSULE_BUILD_FLASHRT_BACKEND)
   add_library(capsule_nexus_flashrt SHARED
     core/src/capsule.cpp
     host/src/model_runtime.cpp
+    nexus/schedulers/stage_dag.cpp
+    nexus/schedulers/stage_dag_c.cpp
+    nexus/state/graph_store.cpp
+    nexus/modes/rtc_action_chunk.cpp
+    nexus/modes/rtc_action_chunk_c.cpp
     backends/flashrt/flashrt_backend.cpp
     backends/flashrt/flashrt_runtime_adapter.cpp
     backends/flashrt/flashrt_model_adapter.cpp)
   target_include_directories(capsule_nexus_flashrt
-    PUBLIC  core/include host/include backends/flashrt
+    PUBLIC  . core/include host/include backends/flashrt
     PRIVATE "${FLASHRT_EXEC_DIR}/include" "${FLASHRT_RUNTIME_DIR}/include")
   target_link_libraries(capsule_nexus_flashrt PUBLIC CUDA::cudart "${FLASHRT_EXEC_LIB}")
 endif()

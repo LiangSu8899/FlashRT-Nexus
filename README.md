@@ -59,8 +59,6 @@ is named **capsule**.
 A **capsule** is the full, restorable execution state at a committed boundary — a fixed set of named
 buffers (KV / recurrent / conv state / diffusion seed / scales / metadata), frozen as an object.
 
-![the capsule four verbs](docs/figures/capsule_four_verbs.png)
-
 **snapshot** freeze a boundary · **restore** warm-start / undo / episode-reset · **fork** one boundary
 into N live sets · **move** serialize and ship to another node. Every capsule is stamped with a backend
 fingerprint (`{weights, quant, kernel, arch}`); `restore` refuses on mismatch.
@@ -91,7 +89,7 @@ The authoritative spec is the C ABI header
 | **P1** | FlashRT backend (over `libflashrt_exec` + CUDA) | **done** — GPU smoke 12/12 (capture/replay + snapshot/restore/restore_into across tiers + fingerprint guard) |
 | **P1.5** | runtime-export adoption (`frt_runtime_export_v1` → wired backend, one call) | **done** — C++ adopt test + cross-language gate (Python producer → Nexus consumer), async-ordering conformance |
 | **P1.6** | standard model-runtime face (`cap_model_runtime`: ports, stage DAG, hot inputs) | **done** — hot-input contract pinned (SWAP/STAGED updates between ticks, no recapture); real Pi0.5 per-tick dynamic input gate |
-| P2 | first scheduler + agent mode; warm-start over a real model | next |
+| P2 | first scheduler/state/mode layer over `cap_model_runtime` | in progress — StageDAG runner + C ABI, GraphStore policy surface, RTC action-chunk mode + C ABI |
 | P3 | robot-async + multi-model schedulers (rollout / planner→actor) | planned |
 
 ## Quickstart
@@ -136,8 +134,6 @@ The export may come from a resident Python setup process or from a native
 FlashRT model runtime; this side does not change. The adapter lives in
 [`backends/flashrt/flashrt_runtime_adapter.h`](backends/flashrt/flashrt_runtime_adapter.h).
 
-![adopting a model runtime](docs/figures/model_runtime_adoption.png)
-
 ## The tickable model: ports, stages, hot inputs
 
 A production tick also needs dynamic inputs — that is the **standard
@@ -164,6 +160,12 @@ let `cap_model_tick` run the declared order. The hot contract is pinned by
 tests: updating ports between ticks never recaptures, never allocates, never
 rebinds — replay output tracks buffer contents. Warm-phase shape-bucket
 capture goes through `prepare`, never inside a tick.
+
+Stage-plan names and graph-cut choices live with the FlashRT producer. Nexus
+does not parse names like `vit`, `dit`, `prefill`, or `decode`; after adoption
+it sees only `cap_model_runtime.stages[]` — graph handles, streams, keys, and
+dependency indices. That keeps customer/model cut policies reviewable on the
+producer side while Nexus stays a generic scheduler.
 
 Interface reference and host-layer norms: [`docs/model_runtime.md`](docs/model_runtime.md).
 

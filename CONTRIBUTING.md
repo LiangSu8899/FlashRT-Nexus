@@ -22,10 +22,10 @@ host/             L2  the first framework surface: the standard model-runtime fa
   include/capsule/model_runtime.h   cap_model_runtime (ports · stage DAG · regions · verbs)
   src/                          lookups, alloc-free tick, FFI accessors — mechanism-thin
 nexus/            L2  the framework (grows here): schedulers · modes · state-services
-  schedulers/                   robot-async · multi-model · interruption-aware loops
-  modes/                        agent · rollout · handoff · duplex
+  schedulers/                   reusable stage-DAG runners and scheduler primitives
+  state/                        GraphStore / CapsuleStore policy over backend mechanisms
+  modes/                        agent · rollout · RTC action chunks · handoff · duplex
   transport/                    L3 adapters
-  include/nexus/                the framework API (nexus_* symbols)
 tests/            acceptance + smoke
 internal/         design drafts — NOT public spec; gitignored
 ```
@@ -59,6 +59,8 @@ a lower layer to satisfy a higher one, that field is policy and belongs higher u
    allocates nothing (pre-created events). Graph-cache MECHANISM is the backend pass-through
    (`flashrt_graph_evict*` / `variant_count`); eviction/budget POLICY is an L2 store, and eviction
    happens only at safe points (never while a variant may be in flight).
+8. **RTC is an L2 mode, not a runtime feature.** The runtime producer declares ports/stages and
+   hot verbs; Nexus decides when to fire, poll, splice, fallback, interrupt, or overlap.
 
 **PR checklist:**
 - [ ] The change lives in the correct layer (§1) and adds no policy to `core/` (§2.1).
@@ -66,6 +68,8 @@ a lower layer to satisfy a higher one, that field is policy and belongs higher u
 - [ ] If the C ABI changed, it is additive and follows §4 (and is justified).
 - [ ] `host/` stayed capsule-typed and data-first (§2.7): no frt includes, no model names, no policy;
       hot verbs and the tick still allocate nothing; STAGED ports actually accept hot updates.
+- [ ] RTC / async-loop behavior lives under `nexus/modes` or `nexus/schedulers`, never in `core/`,
+      `host/`, or the FlashRT runtime producer.
 - [ ] Builds and tests pass (§5); correctness is preserved (bit/token/cosine-exact where applicable).
 - [ ] Commit & file hygiene (§6).
 
@@ -127,13 +131,17 @@ cmake -S . -B build -DCAPSULE_BUILD_FLASHRT_BACKEND=ON -DFLASHRT_EXEC_DIR=<Flash
 cmake --build build -j && ./build/test_flashrt_gpu
 ./build/test_runtime_adopt      # runtime-export adoption + lifetime
 ./build/test_model_adopt        # model-runtime face + the hot-input contract
+./build/test_nexus_l2           # L2 scheduler + RTC mode + graph store (stub backend, no GPU)
 FLASHRT_DIR=<FlashRT> python tests/gate_python_producer.py   # cross-language seam
 ```
 
 Changes that touch `host/` or `backends/flashrt` must keep `test_model_adopt` green — it pins the
 hot-input contract (SWAP/STAGED updates between ticks, no recapture/alloc/rebind) and the adoption
-lifetime. The real-model gates (`tests/gate_pi05_model.py`, `tests/gate_pi05_export.py`) are the
-end-to-end reference; run them when the seam or the tick semantics change.
+lifetime. Changes under `nexus/` must keep `test_nexus_l2` green — it pins single in-flight per
+stage, steady-state zero allocation, rate tables, deadline-fallback semantics, and the chunk-shape
+contract. The real-model gates (`tests/gate_pi05_model.py`, `tests/gate_pi05_export.py`,
+`tests/gate_pi05_rtc_action_chunk.py`) are the end-to-end reference; run them when the seam, the
+tick semantics, or the scheduling layer change.
 
 Gates a PR must meet: the zero-dep core build is green; all built tests pass; a new path produces output
 identical to the path it replaces (bit-identical / token-exact / cosine ≥ 0.999, as applicable), with a
