@@ -8,7 +8,8 @@ FlashRT Nexus connects FlashRT replay, robot runtimes, and agent workflows throu
 
 <p align="center">
   | <a href="https://arxiv.org/abs/2606.20537"><b>Paper: Execution-State Capsules</b></a>
-  | <a href="https://github.com/LiangSu8899/FlashRT"><b>FlashRT (edge backend)</b></a> |
+  | <a href="https://github.com/flashrt-project/FlashRT"><b>FlashRT</b></a>
+  | <a href="https://github.com/Physical-Intelligence/real-time-chunking-kinetix"><b>Pi RTC reference</b></a> |
 </p>
 
 ---
@@ -171,10 +172,16 @@ Interface reference and host-layer norms: [`docs/model_runtime.md`](docs/model_r
 
 ## Relationship to FlashRT
 
-[FlashRT](https://github.com/LiangSu8899/FlashRT) is the inference engine — hand-written kernels
-composed into static CUDA graphs, exposing a minimal execution contract (`libflashrt_exec`). Nexus is
-the serving substrate *above* it: it consumes FlashRT **unchanged** through the FlashRT backend and adds
-the state + schedule + lifecycle control layer.
+[FlashRT](https://github.com/flashrt-project/FlashRT) is the inference engine — hand-written kernels
+composed into static CUDA graphs, exposing the runtime/model-runtime export contracts that Nexus adopts.
+Nexus is the serving substrate *above* it: it consumes FlashRT **unchanged** through the FlashRT backend
+and adds the state + schedule + lifecycle control layer.
+
+The RTC action-chunk mode is informed by the Pi
+[real-time-chunking-kinetix](https://github.com/Physical-Intelligence/real-time-chunking-kinetix)
+semantics: keep the robot loop supplied with actions while the next chunk is pending, then splice at
+chunk boundaries. In this repository, RTC is kept as an L2 scheduling mode over producer-declared
+model-runtime stages and ports; model-internal guided denoising remains a FlashRT producer concern.
 
 ## Non-goals
 
