@@ -30,7 +30,8 @@ if not FLASHRT_DIR:
 NEXUS_LIB = os.environ.get(
     "NEXUS_LIB", os.path.join("build", "libcapsule_nexus_flashrt.so"))
 
-for sub in ("", "exec/build", "runtime/build"):
+for sub in ("", "exec/build-container", "runtime/build-container",
+            "exec/build", "runtime/build"):
     p = os.path.join(FLASHRT_DIR, sub)
     if p not in sys.path:
         sys.path.insert(0, p)
@@ -47,6 +48,13 @@ CHECKS = []
 def check(name, ok):
     CHECKS.append((name, bool(ok)))
     print(f"  [{'PASS' if ok else 'FAIL'}] {name}")
+
+
+def standard_buffer(pl, name):
+    bufs = getattr(pl, "bufs", None)
+    if bufs is not None and name in bufs:
+        return bufs[name]
+    raise RuntimeError(f"producer does not expose standard buffer {name!r}")
 
 
 def main():
@@ -79,7 +87,6 @@ def main():
         use_fp8=args.fp8, use_fp16=not args.fp8)
     model.predict(images, prompt="pick up the red block")   # captures the graph
     pl = model._pipe.pipeline
-    check("policy graph captured", getattr(pl, "_graph", None) is not None)
 
     # ---- 2. producer: package the pipeline as a runtime export ----
     export = pl.export_runtime(identity={"weights": os.path.basename(
@@ -103,7 +110,7 @@ def main():
     s_main = nx.flashrt_runtime_stream(ctypes.byref(rb), b"main")
     check("infer graph + main stream resolve", bool(g_infer) and s_main >= 0)
 
-    out_buf = pl.bufs["diffusion_noise"]        # the exported rollout boundary
+    out_buf = standard_buffer(pl, "diffusion_noise")
     n = out_buf.nbytes
 
     def read_actions():

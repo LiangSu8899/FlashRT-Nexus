@@ -35,7 +35,8 @@ if not FLASHRT_DIR:
 NEXUS_LIB = os.environ.get(
     "NEXUS_LIB", os.path.join("build", "libcapsule_nexus_flashrt.so"))
 
-for sub in ("", "exec/build", "runtime/build"):
+for sub in ("", "exec/build-container", "runtime/build-container",
+            "exec/build", "runtime/build"):
     p = os.path.join(FLASHRT_DIR, sub)
     if p not in sys.path:
         sys.path.insert(0, p)
@@ -50,6 +51,13 @@ CHECKS = []
 def check(name, ok):
     CHECKS.append((name, bool(ok)))
     print(f"  [{'PASS' if ok else 'FAIL'}] {name}")
+
+
+def standard_buffer(pl, name):
+    bufs = getattr(pl, "bufs", None)
+    if bufs is not None and name in bufs:
+        return bufs[name]
+    raise RuntimeError(f"producer does not expose standard buffer {name!r}")
 
 
 def bind(nx):
@@ -135,7 +143,7 @@ def main():
     stream = nx.cap_model_stage_stream(cm, 0)
     check("noise window wired", bool(noise_buf) and nbytes > 0 and stream >= 0)
 
-    out_ptr = pl.bufs["diffusion_noise"].ptr.value
+    out_ptr = standard_buffer(pl, "diffusion_noise").ptr.value
 
     def read_actions():
         buf = ctypes.create_string_buffer(nbytes)
