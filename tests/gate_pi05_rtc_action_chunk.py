@@ -21,7 +21,6 @@ import time
 from pathlib import Path
 
 import numpy as np
-import torch
 
 
 FLASHRT_DIR = os.environ.get("FLASHRT_DIR")
@@ -45,6 +44,9 @@ from flash_rt.subgraphs.pi05.context_action import enable as enable_context_acti
 
 
 FRT_RT_PIXEL_RGB8 = 0
+FRT_RT_DTYPE_F32 = 1
+FRT_RT_DTYPE_F16 = 2
+FRT_RT_DTYPE_BF16 = 3
 FRT_PI05_DTYPE_BFLOAT16 = 1
 FRT_PI05_DTYPE_FLOAT16 = 2
 FRT_PI05_DTYPE_FLOAT32 = 3
@@ -207,15 +209,32 @@ def action_affine(norm_stats) -> tuple[np.ndarray, np.ndarray]:
     return np.ascontiguousarray(mean), np.ascontiguousarray(scale)
 
 
-def dtype_from_pipe(pipe) -> int:
-    dtype = pipe._noise_out.dtype
-    if dtype == torch.bfloat16:
+def dtype_from_model_runtime(mr) -> int:
+    dtype = None
+    for port in mr.ports():
+        if port.get("name") == "noise":
+            dtype = port.get("dtype")
+            break
+    if dtype is None:
+        raise RuntimeError("model runtime does not declare a noise port dtype")
+
+    text = str(dtype).lower()
+    if dtype == FRT_RT_DTYPE_BF16 or text in ("bf16", "bfloat16"):
         return FRT_PI05_DTYPE_BFLOAT16
-    if dtype == torch.float16:
+    if dtype == FRT_RT_DTYPE_F16 or text in ("f16", "float16", "fp16"):
         return FRT_PI05_DTYPE_FLOAT16
-    if dtype == torch.float32:
+    if dtype == FRT_RT_DTYPE_F32 or text in ("f32", "float32", "fp32"):
         return FRT_PI05_DTYPE_FLOAT32
-    raise RuntimeError(f"unsupported Pi05 dtype: {dtype}")
+    raise RuntimeError(f"unsupported Pi05 runtime dtype: {dtype!r}")
+
+
+def model_norm_stats(pl, pipe):
+    stats = getattr(pl, "norm_stats", None)
+    if stats is None:
+        stats = getattr(pipe, "norm_stats", None)
+    if stats is None:
+        raise RuntimeError("producer does not expose Pi05 action norm_stats")
+    return stats
 
 
 def make_noise_bytes(nbytes: int, dtype_id: int, seed: int) -> bytes:
@@ -264,8 +283,8 @@ def main() -> None:
     if len(mr.stages()) != 2:
         raise RuntimeError(f"expected 2 stages, got {mr.stages()}")
 
-    dtype_id = dtype_from_pipe(pipe)
-    mean, stddev = action_affine(pipe.norm_stats)
+    dtype_id = dtype_from_model_runtime(mr)
+    mean, stddev = action_affine(model_norm_stats(pl, pipe))
     cfg = Pi05RuntimeConfig()
     cfg.struct_size = ctypes.sizeof(cfg)
     cfg.num_views = args.num_views
