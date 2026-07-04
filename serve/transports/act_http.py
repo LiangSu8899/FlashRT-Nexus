@@ -9,6 +9,8 @@ from urllib.parse import urlparse
 
 from serve.session import ModelSession
 
+MAX_BODY_BYTES = 64 * 1024 * 1024   # 3 raw camera views fit far below this
+
 
 def serve_act_http(session: ModelSession, host: str, port: int) -> None:
     handler = _handler(session)
@@ -64,6 +66,8 @@ def _handler(session: ModelSession):
 
         def _read_json(self) -> dict[str, Any]:
             n = int(self.headers.get("content-length", "0"))
+            if n < 0 or n > MAX_BODY_BYTES:
+                raise ValueError(f"body must be 0..{MAX_BODY_BYTES} bytes")
             if n == 0:
                 return {}
             data = self.rfile.read(n)

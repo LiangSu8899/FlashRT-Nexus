@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import ctypes
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -75,6 +76,9 @@ class ModelSession:
         self.stream = int(self.nx.cap_model_stage_stream(self.model, 0))
         self.action_shape = producer.action_shape
         self.chunk_id = 0
+        # One cap_ctx is driven by one thread of control (the core rule).
+        # The transport may be threaded; every mutating verb serializes here.
+        self.lock = threading.Lock()
         self.capsules: dict[str, CapsuleRecord] = {}
         self.capsule_dir = Path(capsule_dir) if capsule_dir else None
         if self.capsule_dir:
@@ -119,6 +123,10 @@ class ModelSession:
         }
 
     def act(self, request: dict[str, Any]) -> ActResult:
+        with self.lock:
+            return self._act_locked(request)
+
+    def _act_locked(self, request: dict[str, Any]) -> ActResult:
         self._set_prompt(request)
         self._set_state(request)
         images = decode_images(request.get("images"), self.producer.num_views)
@@ -146,6 +154,10 @@ class ModelSession:
                          latency_ms=latency_ms)
 
     def snapshot(self, name: str | None = None) -> str:
+        with self.lock:
+            return self._snapshot_locked(name)
+
+    def _snapshot_locked(self, name: str | None) -> str:
         cap_id = name or f"cap-{len(self.capsules) + 1:04d}"
         boundary = self._boundary()
         cap = self.nx.cap_snapshot(self.ctx, ctypes.byref(boundary),
@@ -158,6 +170,10 @@ class ModelSession:
         return cap_id
 
     def reset(self, cap_id: str) -> None:
+        with self.lock:
+            self._reset_locked(cap_id)
+
+    def _reset_locked(self, cap_id: str) -> None:
         rec = self.capsules.get(cap_id)
         if rec is None:
             raise KeyError(cap_id)
