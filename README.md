@@ -81,20 +81,11 @@ for GPU↔host↔disk). `fork` and `move` are compositions over those primitives
 The authoritative spec is the C ABI header
 [`core/include/capsule/capsule.h`](core/include/capsule/capsule.h). Rationale is in the paper above.
 
-## Status
-
-| phase | what | state |
-|---|---|---|
-| **P0** | zero-dependency core C ABI + reference impl + host stub backend + acceptance test | **done** — 28/28 checks, no third-party dep |
-| **P1** | FlashRT backend (over `libflashrt_exec` + CUDA) | **done** — GPU smoke 12/12 (capture/replay + snapshot/restore/restore_into across tiers + fingerprint guard) |
-| **P1.5** | runtime-export adoption (`frt_runtime_export_v1` → wired backend, one call) | **done** — C++ adopt test + cross-language gate (Python producer → Nexus consumer), async-ordering conformance |
-| **P1.6** | standard model-runtime face (`cap_model_runtime`: ports, stage DAG, hot inputs) | **done** — hot-input contract pinned (SWAP/STAGED updates between ticks, no recapture); real Pi0.5 per-tick dynamic input gate |
-| P2 | first scheduler/state/mode layer over `cap_model_runtime` | in progress — StageDAG runner + C ABI, GraphStore policy surface, RTC action-chunk mode + C ABI |
-| P3 | robot-async + multi-model schedulers (rollout / planner→actor) | planned |
-
 ## Quickstart
 
-Serve a Pi0.5 action endpoint from a deployment manifest:
+### HTTP demo
+
+Start a Pi0.5 action endpoint from a deployment manifest:
 
 ```sh
 export FLASHRT_DIR=/path/to/FlashRT
@@ -106,17 +97,40 @@ bin/nexus serve examples/pi05_libero.yaml
 curl http://127.0.0.1:8080/healthz
 ```
 
-The full serving entry, Act API, and session snapshot/reset verbs are documented in
-[`docs/serve.md`](docs/serve.md). The manifest is the deployment surface; the
-producer still owns model load, capture, and stage-plan authorization.
+The HTTP route is for demos, remote debugging, and simple integration. It
+exposes Act API requests, state inspection, and session snapshot/reset. Full
+usage: [`docs/serve.md`](docs/serve.md).
 
-For same-process control loops, the no-HTTP entry is
-[`serve.embedded.EmbeddedSession`](docs/embedded.md): open the same manifest,
-write image/state buffers directly, tick the adopted model runtime, and read
-actions without JSON/base64/socket overhead.
-The C/C++ form for robot loops and transport adapters is
+### No-HTTP embedded
+
+Use the same manifest inside a local control loop without an HTTP server:
+
+```sh
+python examples/pi05_embedded.py examples/pi05_libero.yaml
+python tests/gate_pi05_embedded.py --iters 32
+```
+
+The Python embedded API is [`serve.embedded.EmbeddedSession`](docs/embedded.md):
+it accepts image/state arrays directly and returns action arrays without
+JSON/base64/socket/list-conversion overhead.
+
+For C++ robot loops and transport adapters, use
 [`nexus/embedded/session.h`](nexus/embedded/session.h), documented in
-[`docs/cpp_embedded.md`](docs/cpp_embedded.md).
+[`docs/cpp_embedded.md`](docs/cpp_embedded.md). A ROS2/shm/camera-SDK adapter
+maps incoming buffers to `nexus_embedded_input[]`, maps action destinations to
+`nexus_embedded_output[]`, and calls `nexus_embedded_step()` once per control
+tick.
+
+## Documentation
+
+- [`docs/serve.md`](docs/serve.md): HTTP transport, Act API, manifest, demo deployment.
+- [`docs/embedded.md`](docs/embedded.md): no-HTTP Python entry for same-process loops.
+- [`docs/cpp_embedded.md`](docs/cpp_embedded.md): C/C++ session ABI for ROS2/shm/local control loops.
+- [`docs/model_runtime.md`](docs/model_runtime.md): ports, stages, hot-input contract, cache discipline.
+- [`docs/modes.md`](docs/modes.md): mode authoring contract.
+- [`docs/adaptation_map.md`](docs/adaptation_map.md): where new models, transports, schedulers, and modes plug in.
+
+## Development Gates
 
 Core + stub (no GPU, no third-party dependency — needs only a C++17 compiler):
 
