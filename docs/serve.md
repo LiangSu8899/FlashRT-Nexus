@@ -10,6 +10,9 @@ SETUP -> EXPORT -> ADOPT -> WARM -> SERVE -> DRAIN
 The first implementation is intentionally narrow and useful: a Pi0.5 VLA
 producer exports the standard model-runtime face, Nexus adopts it, and an Act
 HTTP transport serves synchronous action ticks plus session snapshot/reset.
+The producer is loaded through `producer.entry` (`module:function`); the Pi0.5
+example uses a bundled plugin, and future model plugins can live with their
+FlashRT producers while exposing the same handle to Nexus.
 
 ## Security posture
 
@@ -76,6 +79,11 @@ curl -X POST http://127.0.0.1:8080/v1/session/reset \
   -H 'content-type: application/json' -d '{"capsule":"ep-001"}'
 ```
 
+When `state.capsule_dir` is set, snapshots are serialized as `<capsule>.cap`
+with an atomic replace and are loaded again on the next `nexus serve` startup.
+Capsule names are restricted to `[A-Za-z0-9][A-Za-z0-9_.-]{0,127}` so a
+request cannot escape the configured directory.
+
 ## Boundary
 
 The serve shell does not interpret graph names, subgraph cuts, or model
@@ -87,3 +95,33 @@ capsule verbs.
 when the producer exports matching `prompt`/`text` or `state` ports; otherwise a
 dynamic value is rejected instead of silently ignored. A request that repeats the
 setup prompt remains valid for producers that bake prompt handling into setup.
+
+## Manifest
+
+```yaml
+model:
+  checkpoint: ${PI05_CHECKPOINT:-/path/to/pi05_checkpoint}
+  config: pi05
+  framework: torch
+  hardware: auto
+  precision: fp16
+  num_views: 3
+  steps: 10
+  stage_plan: full
+  io: native
+  prompt: pick up the red block
+producer:
+  kind: python
+  entry: serve.producer_plugins.pi05:build
+  flashrt_dir: ${FLASHRT_DIR:-/path/to/FlashRT}
+  nexus_lib: ${NEXUS_LIB:-build/libcapsule_nexus_flashrt.so}
+  native_verbs: ${PI05_LIB:-/path/to/libflashrt_cpp_pi05_c.so}
+mode:
+  kind: tick
+serve:
+  transport: act_http
+  host: 127.0.0.1
+  port: 8080
+state:
+  capsule_dir: ./capsules
+```
