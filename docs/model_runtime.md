@@ -70,7 +70,7 @@ The reusable L2 helpers live under `nexus/`, above this host face:
   fire an action stage, poll its completion, copy completed output chunks,
   emit one action at a time, and let the robot loop execute the previous
   chunk or fallback while the new chunk is pending.
-- `nexus/modes/rtc_action_chunk_c.h` exposes that mode as a C ABI. The caller
+- `nexus/modes/rtc_action_chunk/rtc_action_chunk_c.h` exposes that mode as a C ABI. The caller
   keeps the `cap_ctx`, `cap_model_runtime`, and `nexus_stage_dag` alive.
 
 For standard VLA action outputs, create the RTC mode from the producer's

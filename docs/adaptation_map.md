@@ -37,6 +37,21 @@ scheduling policy.
 - If a mode needs state the face does not carry, the fix is a richer
   export from the producer — not a side channel.
 
+## Layout and growth rules
+
+- **One directory per mode** (`nexus/modes/<name>/`): implementation,
+  C ABI mirror, and the mode's README travel together. Family
+  sub-directories appear only when a family has two members.
+- **`examples/` teaches one concept each**: a thin runner + README
+  over real wiring. **`scenarios/` (L3)** is where complete
+  interaction serving assemblies live — VLA hosts, LLM planner hosts,
+  planner+actor coexistence, world-model hosts. The directory is
+  created with its first member; an example graduates into it when it
+  grows into a production-shaped host.
+- **Every top-level directory carries a README** stating its layer
+  and what does not belong in it — the tree must explain the
+  architecture without reading code.
+
 ## Runnable references
 
 - `examples/` — presentation-shaped entry points with READMEs; start
