@@ -1,0 +1,24 @@
+model:
+  checkpoint: ${PI05_CHECKPOINT:-/path/to/pi05_checkpoint}
+  config: pi05
+  framework: torch
+  hardware: auto
+  precision: fp16
+  num_views: 3
+  steps: 10
+  stage_plan: full
+  io: native
+  prompt: pick up the red block
+producer:
+  kind: python
+  flashrt_dir: ${FLASHRT_DIR:-/path/to/FlashRT}
+  nexus_lib: ${NEXUS_LIB:-build/libcapsule_nexus_flashrt.so}
+  native_verbs: ${PI05_LIB:-/path/to/libflashrt_cpp_pi05_c.so}
+mode:
+  kind: tick
+serve:
+  transport: act_http
+  host: 127.0.0.1
+  port: 8080
+state:
+  capsule_dir: ./capsules
