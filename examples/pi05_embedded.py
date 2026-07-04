@@ -23,7 +23,7 @@ def main() -> int:
         result = nx.act(images, prompt="pick up the red block", seed=7)
         print({
             "chunk_id": result.chunk_id,
-            "shape": [len(result.actions), len(result.actions[0])],
+            "shape": list(result.actions.shape),
             "latency_ms": result.latency_ms,
         })
     return 0
