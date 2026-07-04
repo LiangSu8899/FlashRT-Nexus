@@ -108,9 +108,20 @@ curl -X POST http://127.0.0.1:8080/v1/session/reset \
 ```
 
 When `state.capsule_dir` is set, snapshots are serialized as `<capsule>.cap`
-with an atomic replace and are loaded again on the next `nexus serve` startup.
-Capsule names are restricted to `[A-Za-z0-9][A-Za-z0-9_.-]{0,127}` so a
-request cannot escape the configured directory.
+with an fsync'd temporary file, atomic replace, and parent-directory fsync.
+They are loaded again on the next `nexus serve` startup. Capsule names are
+restricted to `[A-Za-z0-9][A-Za-z0-9_.-]{0,127}` so a request cannot escape the
+configured directory.
+
+Capsule correctness is deployment-bound. Within one live capture/deployment,
+snapshot and restore are bit-exact at the declared boundary. A serialized
+capsule reloads into the current live deployment after the fingerprint guard
+accepts it. It does not promise that two independent process startups or graph
+captures will produce bitwise-identical future floating-point outputs: producer
+autotune, kernel algorithm selection, driver versions, and hardware can make
+small FP differences while preserving the same runtime contract. For
+bit-exact validation, compare inside one process/capture, or pin the producer's
+autotune and kernel-selection settings.
 
 ## Deployment Patterns
 

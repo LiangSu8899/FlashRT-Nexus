@@ -342,8 +342,12 @@ class ModelSession:
             raise RuntimeError(f"cap_serialize(blob) rc={rc}")
         tmp = path.with_name(
             f".{path.name}.tmp-{os.getpid()}-{time.time_ns()}")
-        tmp.write_bytes(blob.raw[:n.value])
+        with tmp.open("wb") as f:
+            f.write(blob.raw[:n.value])
+            f.flush()
+            os.fsync(f.fileno())
         os.replace(tmp, path)
+        _fsync_dir(path.parent)
 
     def _load_persisted_capsules(self) -> None:
         assert self.capsule_dir is not None
@@ -445,3 +449,11 @@ def _bf16_noise(rng: np.random.Generator, nbytes: int) -> bytes:
 
 def _decode(value: bytes | None) -> str:
     return value.decode() if value else ""
+
+
+def _fsync_dir(path: Path) -> None:
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
