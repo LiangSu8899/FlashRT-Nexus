@@ -11,6 +11,17 @@ The first implementation is intentionally narrow and useful: a Pi0.5 VLA
 producer exports the standard model-runtime face, Nexus adopts it, and an Act
 HTTP transport serves synchronous action ticks plus session snapshot/reset.
 
+## Security posture
+
+The shell binds `127.0.0.1` by default and carries no authentication: it is a
+same-host control surface, like a robot-local daemon. To expose it beyond the
+host, front it with an authenticating reverse proxy — do not just set
+`serve.host: 0.0.0.0`. Request bodies are capped (64 MiB); one model session
+serializes its mutating verbs (`act`/`snapshot`/`reset`), so concurrent
+clients are safe but share one model's throughput. `/v1/state` intentionally
+reports the full identity string (white-box operations); treat it as
+deployment metadata, not a secret.
+
 ## Run
 
 ```sh

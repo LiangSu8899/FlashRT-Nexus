@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import signal
 import sys
 
 from .manifest import get_section, load_manifest, optional_int, optional_str
@@ -43,6 +44,11 @@ def _serve(path: str) -> int:
     )
     print(f"phase={session.phase} fingerprint=0x{session.fingerprint:016x}")
     print(f"serving {transport} on {host}:{port}")
+
+    def _drain(signum, frame):  # noqa: ARG001
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, _drain)
     try:
         if transport == "act_http":
             serve_act_http(session, host, port)
