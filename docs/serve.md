@@ -1,21 +1,35 @@
-# Nexus Serve
+# Nexus Serve: HTTP Transport
 
-`nexus serve` is the product entry over the existing mechanism. It owns the
-deployment lifecycle:
+`nexus serve` is the HTTP product entry over the Nexus lifecycle:
 
 ```
 SETUP -> EXPORT -> ADOPT -> WARM -> SERVE -> DRAIN
 ```
 
-The first implementation is intentionally narrow and useful: a Pi0.5 VLA
-producer exports the standard model-runtime face, Nexus adopts it, and an Act
-HTTP transport serves synchronous action ticks plus session snapshot/reset.
-The producer is loaded through `producer.entry` (`module:function`); the Pi0.5
-example uses a bundled plugin, and future model plugins can live with their
-FlashRT producers while exposing the same handle to Nexus.
+It is a transport adapter, not the lifecycle itself. The producer loads the
+model, captures graphs, and exports the standard model-runtime face. Nexus
+adopts that face, owns a resident session, and maps HTTP requests to declared
+ports/stages plus capsule verbs.
 
-For a same-process control loop, use the same manifest through the embedded
-entry in [`docs/embedded.md`](embedded.md) instead of the HTTP transport.
+Use HTTP for demos, remote debugging, local dashboards, and non-real-time
+clients. For a same-process robot loop or low-latency local AI loop, use the
+embedded entries in [`docs/embedded.md`](embedded.md) and
+[`docs/cpp_embedded.md`](cpp_embedded.md).
+
+The producer is loaded through `producer.entry` (`module:function`). The Pi0.5
+example uses a bundled plugin; production plugins can live beside their
+FlashRT producers while returning the same `ProducerHandle` shape to Nexus.
+
+## Lifecycle
+
+| phase | owner | meaning |
+|---|---|---|
+| SETUP | producer | load weights, initialize runtime, run calibration/warmup needed for capture |
+| EXPORT | producer | expose `frt_model_runtime_v1`: ports, stages, streams, regions, identity |
+| ADOPT | Nexus | adopt the model-runtime face into `cap_model_runtime` and create `cap_ctx` |
+| WARM | producer/Nexus | prepare any required graph variants before serving |
+| SERVE | transport/mode | apply inputs, tick or fire stages, read outputs, snapshot/reset |
+| DRAIN | Nexus | release model/session resources; persistent capsules remain on disk |
 
 ## Security posture
 
@@ -27,6 +41,10 @@ serializes its mutating verbs (`act`/`snapshot`/`reset`), so concurrent
 clients are safe but share one model's throughput. `/v1/state` intentionally
 reports the full identity string (white-box operations); treat it as
 deployment metadata, not a secret.
+
+For true robot hot paths, do not send camera frames as JSON/base64 HTTP. Use
+HTTP to verify lifecycle and behavior, then put the real control loop on the
+embedded C/Python session API.
 
 ## Run
 
@@ -45,6 +63,8 @@ Health and state:
 curl http://127.0.0.1:8080/healthz
 curl http://127.0.0.1:8080/v1/state
 ```
+
+## Act API
 
 Action request:
 
@@ -72,6 +92,11 @@ Response:
 }
 ```
 
+`images` is required by the Pi0.5 example. `prompt` and `state` are routed only
+when the producer exports matching `prompt`/`text` or `state` ports. If a
+producer bakes prompt handling into setup, a request may repeat the setup
+prompt but cannot change it dynamically.
+
 Session verbs:
 
 ```sh
@@ -87,17 +112,41 @@ with an atomic replace and are loaded again on the next `nexus serve` startup.
 Capsule names are restricted to `[A-Za-z0-9][A-Za-z0-9_.-]{0,127}` so a
 request cannot escape the configured directory.
 
+## Deployment Patterns
+
+### Robot lab demo
+
+Run `nexus serve` on the robot workstation or edge box bound to localhost. A
+test script, dashboard, or teleop tool sends `/v1/act` requests. This validates
+model setup/export/adoption, action shape, capsule reset, and error handling.
+
+Do not expose this endpoint directly on a robot network. If remote access is
+needed, put an authenticating reverse proxy in front of it and keep the Nexus
+process bound to localhost.
+
+### Local AI demo
+
+Use HTTP when an app already speaks JSON or OpenAI-style protocols and latency
+is dominated by model execution rather than serialization. The same session
+verbs can snapshot an agent state, reset a local workflow, or inspect the
+adopted model identity.
+
+### Production hot path
+
+Keep the manifest and producer plugin, but replace `serve.transport: act_http`
+with an embedded/shm/ROS2 adapter. The adapter should call the same session
+semantics documented in [`docs/cpp_embedded.md`](cpp_embedded.md):
+
+```
+camera/state ready -> fill inputs -> nexus_embedded_step -> publish actions
+```
+
 ## Boundary
 
 The serve shell does not interpret graph names, subgraph cuts, or model
 internals. The producer owns capture and exports ports/stages. The shell maps
 HTTP payloads to declared model-runtime ports and drives `cap_model_tick` plus
 capsule verbs.
-
-`images` is required for the Pi0.5 example. `prompt` and `state` are routed only
-when the producer exports matching `prompt`/`text` or `state` ports; otherwise a
-dynamic value is rejected instead of silently ignored. A request that repeats the
-setup prompt remains valid for producers that bake prompt handling into setup.
 
 ## Manifest
 

@@ -23,10 +23,15 @@ host/             L2  the first framework surface: the standard model-runtime fa
   src/                          lookups, alloc-free tick, FFI accessors — mechanism-thin
 nexus/            L2  the framework (grows here): schedulers · modes · state-services
   schedulers/                   reusable stage-DAG runners and scheduler primitives
+  embedded/                     C/C++ no-HTTP session ABI for same-process control loops
   state/                        GraphStore / CapsuleStore policy over backend mechanisms
   modes/                        interaction state machines, ONE DIRECTORY PER MODE
     rtc_action_chunk/           embodied async inference (action chunking)
     (next: spec_session/ — LLM speculative-decode sessions)
+serve/            L3  product shell and transports
+  manifest / deployment         deployment file parsing + lifecycle opener
+  transports/                   HTTP or other process-bound transports
+  producer_plugins/             thin bundled examples; production plugins may live with producers
 examples/         single-concept runnable demos (thin runner + README each)
 scenarios/        L3  complete interaction serving assemblies (VLA hosts, LLM
                   planners, planner+actor coexistence, world models). Created
@@ -67,6 +72,12 @@ a lower layer to satisfy a higher one, that field is policy and belongs higher u
    happens only at safe points (never while a variant may be in flight).
 8. **RTC is an L2 mode, not a runtime feature.** The runtime producer declares ports/stages and
    hot verbs; Nexus decides when to fire, poll, splice, fallback, interrupt, or overlap.
+9. **Transports are adapters, not lifecycle owners.** HTTP, ROS2, shm, and embedded loops call the
+   same deployment/session semantics. They must not parse model internals, assume graph names, or own
+   capture. The C embedded ABI starts from an adopted `cap_model_runtime*`; producer setup stays with
+   FlashRT.
+10. **No-HTTP hot paths stay data-shaped.** Embedded APIs return buffers, arrays, or POD views. JSON,
+    base64, Python lists, and protocol-specific objects belong only at transport boundaries.
 
 **PR checklist:**
 - [ ] The change lives in the correct layer (§1) and adds no policy to `core/` (§2.1).
@@ -76,6 +87,10 @@ a lower layer to satisfy a higher one, that field is policy and belongs higher u
       hot verbs and the tick still allocate nothing; STAGED ports actually accept hot updates.
 - [ ] RTC / async-loop behavior lives under `nexus/modes` or `nexus/schedulers`, never in `core/`,
       `host/`, or the FlashRT runtime producer.
+- [ ] Transport changes call the common session/embedded surface and do not duplicate model-specific
+      loops, graph-name assumptions, or capsule persistence policy.
+- [ ] Embedded changes preserve direct buffer semantics: no JSON/base64/list conversion on the no-HTTP
+      path, and one session cannot drive one `cap_ctx` concurrently.
 - [ ] Builds and tests pass (§5); correctness is preserved (bit/token/cosine-exact where applicable).
 - [ ] Commit & file hygiene (§6).
 
@@ -87,6 +102,7 @@ a lower layer to satisfy a higher one, that field is policy and belongs higher u
 |---|---|---|
 | **Core / mechanism** | `capsule` — C ABI symbols `cap_*` (functions/types), `CAP_*` (constants/enums); header `capsule/capsule.h`; lib `capsule_core` | `cap_snapshot`, `CAP_TIER_GPU` |
 | **Framework / product** | `nexus` / **FlashRT Nexus** — symbols `nexus_*`, headers `nexus/*.h`, config `NEXUS_*` (as L2 lands); brand string "FlashRT Nexus" | `nexus_scheduler_*` |
+| **Embedded session** | C ABI symbols `nexus_embedded_*`, header `nexus/embedded/session.h` | `nexus_embedded_step` |
 | **FlashRT backend** | implements the capsule seam for FlashRT: entrypoints `flashrt_backend_init/fini`, lib `capsule_backend_flashrt`, dir `backends/flashrt/` | `flashrt_backend_init`, `capsule_backend_flashrt` |
 | **FlashRT backend build toggle** | `CAPSULE_BUILD_FLASHRT_BACKEND` | `CAPSULE_BUILD_FLASHRT_BACKEND` |
 | **Tests** | `test_<area>` | `test_core`, `test_flashrt_gpu` |
@@ -138,6 +154,7 @@ cmake --build build -j && ./build/test_flashrt_gpu
 ./build/test_runtime_adopt      # runtime-export adoption + lifetime
 ./build/test_model_adopt        # model-runtime face + the hot-input contract
 ./build/test_nexus_l2           # L2 scheduler + RTC mode + graph store (stub backend, no GPU)
+./build/test_embedded_session   # C embedded session ABI (stub backend, no GPU)
 FLASHRT_DIR=<FlashRT> python tests/gate_python_producer.py   # cross-language seam
 ```
 
@@ -145,9 +162,12 @@ Changes that touch `host/` or `backends/flashrt` must keep `test_model_adopt` gr
 hot-input contract (SWAP/STAGED updates between ticks, no recapture/alloc/rebind) and the adoption
 lifetime. Changes under `nexus/` must keep `test_nexus_l2` green — it pins single in-flight per
 stage, steady-state zero allocation, rate tables, deadline-fallback semantics, and the chunk-shape
-contract. The real-model gates (`tests/gate_pi05_model.py`, `tests/gate_pi05_export.py`,
-`tests/gate_pi05_rtc_action_chunk.py`) are the end-to-end reference; run them when the seam, the
-tick semantics, or the scheduling layer change.
+contract. Changes under `nexus/embedded/` or no-HTTP session code must keep
+`test_embedded_session` green — it pins SWAP/STAGED input, batched step, output readback,
+snapshot/restore, and serialize/load semantics. The real-model gates (`tests/gate_pi05_model.py`,
+`tests/gate_pi05_export.py`, `tests/gate_pi05_rtc_action_chunk.py`, `tests/gate_pi05_embedded.py`)
+are the end-to-end reference; run them when the seam, the tick semantics, or the scheduling/embedded
+layer change.
 
 Gates a PR must meet: the zero-dep core build is green; all built tests pass; a new path produces output
 identical to the path it replaces (bit-identical / token-exact / cosine ≥ 0.999, as applicable), with a
