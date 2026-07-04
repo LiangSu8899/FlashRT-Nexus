@@ -11,6 +11,7 @@ model:
   prompt: pick up the red block
 producer:
   kind: python
+  entry: serve.producer_plugins.pi05:build
   flashrt_dir: ${FLASHRT_DIR:-/path/to/FlashRT}
   nexus_lib: ${NEXUS_LIB:-build/libcapsule_nexus_flashrt.so}
   native_verbs: ${PI05_LIB:-/path/to/libflashrt_cpp_pi05_c.so}
