@@ -1,6 +1,6 @@
 /* test_nexus_l2.cpp — L2 scheduler/state/mode skeletons. */
-#include "nexus/modes/rtc_action_chunk.h"
-#include "nexus/modes/rtc_action_chunk_c.h"
+#include "nexus/modes/rtc_action_chunk/rtc_action_chunk.h"
+#include "nexus/modes/rtc_action_chunk/rtc_action_chunk_c.h"
 #include "nexus/schedulers/stage_dag_c.h"
 #include "nexus/state/graph_store.h"
 

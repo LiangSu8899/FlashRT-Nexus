@@ -24,8 +24,14 @@ host/             L2  the first framework surface: the standard model-runtime fa
 nexus/            L2  the framework (grows here): schedulers · modes · state-services
   schedulers/                   reusable stage-DAG runners and scheduler primitives
   state/                        GraphStore / CapsuleStore policy over backend mechanisms
-  modes/                        agent · rollout · RTC action chunks · handoff · duplex
-  transport/                    L3 adapters
+  modes/                        interaction state machines, ONE DIRECTORY PER MODE
+    rtc_action_chunk/           embodied async inference (action chunking)
+    (next: spec_session/ — LLM speculative-decode sessions)
+examples/         single-concept runnable demos (thin runner + README each)
+scenarios/        L3  complete interaction serving assemblies (VLA hosts, LLM
+                  planners, planner+actor coexistence, world models). Created
+                  with its first member; an example graduates here when it
+                  becomes a production-shaped host.
 tests/            acceptance + smoke
 internal/         design drafts — NOT public spec; gitignored
 ```

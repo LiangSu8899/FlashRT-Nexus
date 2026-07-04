@@ -40,7 +40,7 @@ face into producer internals.
 
 ## Anatomy, using RTC action chunks as the exemplar
 
-[`nexus/modes/rtc_action_chunk.h`](../nexus/modes/rtc_action_chunk.h)
+[`nexus/modes/rtc_action_chunk/rtc_action_chunk.h`](../nexus/modes/rtc_action_chunk/rtc_action_chunk.h)
 is the reference implementation of the contract:
 
 | Contract clause | Where RTC does it |
@@ -49,17 +49,28 @@ is the reference implementation of the contract:
 | State enum + non-blocking poll | `RtcChunkState {Idle, Pending, Ready, Fallback, Error}`; `poll()` advances, `next_action()` consumes |
 | Allocation at construction | the ring `storage_` is sized in the constructor; the hot path is `fire/query` + one output copy into a pre-sized slot |
 | Telemetry counters | `fallbacks / late_chunks / pending_ticks / *_ready_ticks / completed_chunks / emitted_actions` |
-| C ABI mirror | [`rtc_action_chunk_c.h`](../nexus/modes/rtc_action_chunk_c.h): opaque handle, `struct_size`-checked config, verb-per-function |
+| C ABI mirror | [`rtc_action_chunk_c.h`](../nexus/modes/rtc_action_chunk/rtc_action_chunk_c.h): opaque handle, `struct_size`-checked config, verb-per-function |
 | Deadline as state | `deadline_ticks < 0` disables; overrun marks `kFallback`, the robot keeps executing the previous chunk |
 
 Read it top to bottom once; every future mode should feel like a
 re-instantiation of that file with a different state machine.
 
+## Layout
+
+One directory per mode: `nexus/modes/<name>/` holds the C++ class, the
+C ABI mirror, and the mode's README (what interaction pattern it
+serves, its config, its telemetry). Family sub-grouping (e.g. several
+action-chunk variants) is introduced only when a family reaches two
+members — no empty taxonomy.
+
 ## Authoring checklist
 
-- [ ] `nexus/modes/<name>.h/.cpp` — C++ class per the contract.
-- [ ] `nexus/modes/<name>_c.h/.cpp` — C ABI mirror with a
+- [ ] `nexus/modes/<name>/<name>.h/.cpp` — C++ class per the contract.
+- [ ] `nexus/modes/<name>/<name>_c.h/.cpp` — C ABI mirror with a
       `struct_size`-versioned config.
+- [ ] `nexus/modes/<name>/README.md` — one page: pattern, config,
+      state machine, telemetry; add the mode to
+      `nexus/modes/README.md`.
 - [ ] A conformance-style unit test under `tests/` driving the state
       machine against the stub backend (no GPU needed for the state
       logic).

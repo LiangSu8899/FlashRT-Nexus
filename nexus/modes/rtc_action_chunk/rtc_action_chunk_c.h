@@ -1,4 +1,4 @@
-/* nexus/modes/rtc_action_chunk_c.h — C ABI for Nexus RTC action chunks. */
+/* nexus/modes/rtc_action_chunk/rtc_action_chunk_c.h — C ABI for Nexus RTC action chunks. */
 #ifndef NEXUS_MODES_RTC_ACTION_CHUNK_C_H
 #define NEXUS_MODES_RTC_ACTION_CHUNK_C_H
 

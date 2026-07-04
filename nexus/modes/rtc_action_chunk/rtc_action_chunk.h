@@ -1,4 +1,4 @@
-/* nexus/modes/rtc_action_chunk.h — RTC action-chunk scheduler mode.
+/* nexus/modes/rtc_action_chunk/rtc_action_chunk.h — RTC action-chunk scheduler mode.
  *
  * This mode lives in Nexus, not in FlashRT runtime. It is an outer-loop state
  * machine over a declared action stage: fire asynchronously, poll completion,

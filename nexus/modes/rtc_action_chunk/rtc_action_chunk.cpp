@@ -1,4 +1,4 @@
-#include "nexus/modes/rtc_action_chunk.h"
+#include "nexus/modes/rtc_action_chunk/rtc_action_chunk.h"
 
 #include <cstring>
 #include <limits>
