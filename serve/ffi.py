@@ -118,6 +118,7 @@ def bind_nexus(nx: ctypes.CDLL) -> None:
         "cap_serialize": (i, [p, p, p, ctypes.POINTER(ctypes.c_size_t)]),
         "cap_load": (p, [p, p, ctypes.c_size_t]),
         "cap_restore": (i, [p, p, i]),
+        "cap_restore_into": (i, [p, p, ctypes.POINTER(CapRegion), i, i]),
         "cap_capsule_drop": (None, [p, p]),
     }
     for name, (restype, argtypes) in sigs.items():

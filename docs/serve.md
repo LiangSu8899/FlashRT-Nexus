@@ -14,6 +14,9 @@ The producer is loaded through `producer.entry` (`module:function`); the Pi0.5
 example uses a bundled plugin, and future model plugins can live with their
 FlashRT producers while exposing the same handle to Nexus.
 
+For a same-process control loop, use the same manifest through the embedded
+entry in [`docs/embedded.md`](embedded.md) instead of the HTTP transport.
+
 ## Security posture
 
 The shell binds `127.0.0.1` by default and carries no authentication: it is a

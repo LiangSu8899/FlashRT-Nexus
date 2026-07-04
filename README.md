@@ -110,6 +110,11 @@ The full serving entry, Act API, and session snapshot/reset verbs are documented
 [`docs/serve.md`](docs/serve.md). The manifest is the deployment surface; the
 producer still owns model load, capture, and stage-plan authorization.
 
+For same-process control loops, the no-HTTP entry is
+[`serve.embedded.EmbeddedSession`](docs/embedded.md): open the same manifest,
+write image/state buffers directly, tick the adopted model runtime, and read
+actions without JSON/base64/socket overhead.
+
 Core + stub (no GPU, no third-party dependency — needs only a C++17 compiler):
 
 ```sh
