@@ -58,8 +58,11 @@ def _handler(session: ModelSession):
                     self._json(404, {"error": "not_found"})
             except KeyError as exc:
                 self._json(404, {"error": "unknown_capsule", "capsule": str(exc)})
+            except ValueError as exc:
+                self._json(400, {"error": "bad_request", "detail": str(exc)})
             except Exception as exc:  # noqa: BLE001
-                self._json(400, {"error": str(exc)})
+                print(f"request failed: {type(exc).__name__}: {exc}")
+                self._json(400, {"error": "operation_failed"})
 
         def log_message(self, fmt: str, *args: Any) -> None:
             return
