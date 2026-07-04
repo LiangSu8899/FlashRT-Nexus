@@ -94,6 +94,22 @@ The authoritative spec is the C ABI header
 
 ## Quickstart
 
+Serve a Pi0.5 action endpoint from a deployment manifest:
+
+```sh
+export FLASHRT_DIR=/path/to/FlashRT
+export PI05_CHECKPOINT=/path/to/pi05_checkpoint
+export PI05_LIB=$FLASHRT_DIR/cpp/build/libflashrt_cpp_pi05_c.so
+export NEXUS_LIB=./build/libcapsule_nexus_flashrt.so
+
+bin/nexus serve examples/pi05_libero.yaml
+curl http://127.0.0.1:8080/healthz
+```
+
+The full serving entry, Act API, and session snapshot/reset verbs are documented in
+[`docs/serve.md`](docs/serve.md). The manifest is the deployment surface; the
+producer still owns model load, capture, and stage-plan authorization.
+
 Core + stub (no GPU, no third-party dependency — needs only a C++17 compiler):
 
 ```sh
