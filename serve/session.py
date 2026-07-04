@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import base64
 import ctypes
+import os
+import re
 import threading
 import time
 from dataclasses import dataclass, field
@@ -31,6 +33,7 @@ from .producers import ProducerHandle
 class CapsuleRecord:
     capsule: ctypes.c_void_p
     created_at: float
+    path: Path | None = None
 
 
 @dataclass
@@ -80,9 +83,11 @@ class ModelSession:
         # The transport may be threaded; every mutating verb serializes here.
         self.lock = threading.Lock()
         self.capsules: dict[str, CapsuleRecord] = {}
+        self.skipped_capsules: list[str] = []
         self.capsule_dir = Path(capsule_dir) if capsule_dir else None
         if self.capsule_dir:
             self.capsule_dir.mkdir(parents=True, exist_ok=True)
+            self._load_persisted_capsules()
         self.phase = "SERVE"
 
     def close(self) -> None:
@@ -120,6 +125,7 @@ class ModelSession:
             },
             "action_shape": list(self.action_shape),
             "capsules": sorted(self.capsules.keys()),
+            "skipped_capsules": list(self.skipped_capsules),
         }
 
     def act(self, request: dict[str, Any]) -> ActResult:
@@ -158,15 +164,25 @@ class ModelSession:
             return self._snapshot_locked(name)
 
     def _snapshot_locked(self, name: str | None) -> str:
-        cap_id = name or f"cap-{len(self.capsules) + 1:04d}"
+        cap_id = sanitize_capsule_id(name or f"cap-{len(self.capsules) + 1:04d}")
         boundary = self._boundary()
         cap = self.nx.cap_snapshot(self.ctx, ctypes.byref(boundary),
                                    CAP_TIER_HOST, self.stream)
         if not cap:
             raise RuntimeError("cap_snapshot failed")
         self.nx.cap_sync(self.ctx, self.stream)
+        path = self._capsule_path(cap_id)
+        if path is not None:
+            try:
+                self._write_capsule_blob(cap, path)
+            except Exception:
+                self.nx.cap_capsule_drop(self.ctx, ctypes.c_void_p(cap))
+                raise
+        old = self.capsules.pop(cap_id, None)
+        if old is not None:
+            self.nx.cap_capsule_drop(self.ctx, old.capsule)
         self.capsules[cap_id] = CapsuleRecord(
-            capsule=ctypes.c_void_p(cap), created_at=time.time())
+            capsule=ctypes.c_void_p(cap), created_at=time.time(), path=path)
         return cap_id
 
     def reset(self, cap_id: str) -> None:
@@ -270,6 +286,51 @@ class ModelSession:
             0,
         )
 
+    def _capsule_path(self, cap_id: str) -> Path | None:
+        if self.capsule_dir is None:
+            return None
+        return self.capsule_dir / f"{cap_id}.cap"
+
+    def _write_capsule_blob(self, cap: int, path: Path) -> None:
+        n = ctypes.c_size_t(0)
+        rc = self.nx.cap_serialize(self.ctx, ctypes.c_void_p(cap), None,
+                                   ctypes.byref(n))
+        if rc != CAP_OK or n.value == 0:
+            raise RuntimeError(f"cap_serialize(size) rc={rc} bytes={n.value}")
+        blob = ctypes.create_string_buffer(n.value)
+        rc = self.nx.cap_serialize(self.ctx, ctypes.c_void_p(cap), blob,
+                                   ctypes.byref(n))
+        if rc != CAP_OK:
+            raise RuntimeError(f"cap_serialize(blob) rc={rc}")
+        tmp = path.with_name(
+            f".{path.name}.tmp-{os.getpid()}-{time.time_ns()}")
+        tmp.write_bytes(blob.raw[:n.value])
+        os.replace(tmp, path)
+
+    def _load_persisted_capsules(self) -> None:
+        assert self.capsule_dir is not None
+        for path in sorted(self.capsule_dir.glob("*.cap")):
+            cap_id = path.name[:-4]
+            try:
+                cap_id = sanitize_capsule_id(cap_id)
+            except ValueError:
+                self.skipped_capsules.append(path.name)
+                continue
+            data = path.read_bytes()
+            if not data:
+                self.skipped_capsules.append(path.name)
+                continue
+            buf = ctypes.create_string_buffer(data, len(data))
+            cap = self.nx.cap_load(self.ctx, buf, len(data))
+            if not cap:
+                self.skipped_capsules.append(path.name)
+                continue
+            self.capsules[cap_id] = CapsuleRecord(
+                capsule=ctypes.c_void_p(cap),
+                created_at=path.stat().st_mtime,
+                path=path,
+            )
+
 
 def decode_images(payload: Any, expected_views: int) -> list[np.ndarray]:
     if not isinstance(payload, list) or len(payload) != expected_views:
@@ -304,6 +365,19 @@ def make_image_views(images: list[np.ndarray]) -> ctypes.Array:
         views[i].height = int(im.shape[0])
         views[i].stride_bytes = int(im.strides[0])
     return views
+
+
+_CAPSULE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+
+
+def sanitize_capsule_id(value: str | None) -> str:
+    if value is None:
+        raise ValueError("capsule is required")
+    cap_id = str(value)
+    if not _CAPSULE_ID.fullmatch(cap_id):
+        raise ValueError(
+            "capsule must match [A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
+    return cap_id
 
 
 def _bf16_noise(rng: np.random.Generator, nbytes: int) -> bytes:
