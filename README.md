@@ -168,10 +168,6 @@ dependency indices. That keeps customer/model cut policies reviewable on the
 producer side while Nexus stays a generic scheduler.
 
 Interface reference and host-layer norms: [`docs/model_runtime.md`](docs/model_runtime.md).
-Where new models, backends, modes, and schedulers plug in:
-[`docs/adaptation_map.md`](docs/adaptation_map.md). Mode contract and
-authoring guide: [`docs/modes.md`](docs/modes.md). Runnable assemblies
-with READMEs live under [`examples/`](examples/).
 
 ## Relationship to FlashRT
 
