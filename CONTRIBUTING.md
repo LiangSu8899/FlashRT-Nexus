@@ -91,6 +91,8 @@ a lower layer to satisfy a higher one, that field is policy and belongs higher u
       loops, graph-name assumptions, or capsule persistence policy.
 - [ ] Embedded changes preserve direct buffer semantics: no JSON/base64/list conversion on the no-HTTP
       path, and one session cannot drive one `cap_ctx` concurrently.
+- [ ] Persistent capsule changes preserve path filtering, malformed-blob skipping, atomic write
+      semantics, and the documented live-capture bit-exact boundary.
 - [ ] Builds and tests pass (§5); correctness is preserved (bit/token/cosine-exact where applicable).
 - [ ] Commit & file hygiene (§6).
 
@@ -164,7 +166,8 @@ lifetime. Changes under `nexus/` must keep `test_nexus_l2` green — it pins sin
 stage, steady-state zero allocation, rate tables, deadline-fallback semantics, and the chunk-shape
 contract. Changes under `nexus/embedded/` or no-HTTP session code must keep
 `test_embedded_session` green — it pins SWAP/STAGED input, batched step, output readback,
-snapshot/restore, and serialize/load semantics. The real-model gates (`tests/gate_pi05_model.py`,
+single-session concurrency serialization, snapshot/restore, and serialize/load semantics.
+The real-model gates (`tests/gate_pi05_model.py`,
 `tests/gate_pi05_export.py`, `tests/gate_pi05_rtc_action_chunk.py`, `tests/gate_pi05_embedded.py`)
 are the end-to-end reference; run them when the seam, the tick semantics, or the scheduling/embedded
 layer change.

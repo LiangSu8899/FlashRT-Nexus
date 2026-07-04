@@ -5,6 +5,8 @@
 
 #include <cstdio>
 #include <cstring>
+#include <atomic>
+#include <thread>
 #include <vector>
 
 static int g_fail = 0;
@@ -195,6 +197,41 @@ int main() {
                                         &written, -1) == CAP_OK &&
               same(got, a),
           "embedded restore_into restores loaded capsule");
+
+    std::atomic<bool> concurrent_ok{true};
+    std::vector<std::thread> threads;
+    for (int t = 0; t < 8; ++t) {
+        threads.emplace_back([&, t]() {
+            unsigned char local_in[N], local_out[N];
+            for (int r = 0; r < 32; ++r) {
+                for (size_t i = 0; i < N; ++i)
+                    local_in[i] = (unsigned char)(t * 17 + r * 3 + i);
+                nexus_embedded_input in{};
+                in.struct_size = sizeof(in);
+                in.port = "obs";
+                in.data = local_in;
+                in.bytes = N;
+                in.update = NEXUS_EMBEDDED_SWAP;
+                in.stream = 0;
+                nexus_embedded_output out_desc{};
+                out_desc.struct_size = sizeof(out_desc);
+                out_desc.port = "actions";
+                out_desc.data = local_out;
+                out_desc.capacity = sizeof(local_out);
+                out_desc.stream = -1;
+                nexus_embedded_tick_result step_tr{};
+                int rc = nexus_embedded_step(s, &in, 1, &out_desc, 1,
+                                             &step_tr);
+                if (rc != CAP_OK || out_desc.written != N ||
+                    !same(local_out, local_in))
+                    concurrent_ok.store(false);
+            }
+        });
+    }
+    for (auto& th : threads) th.join();
+    CHECK(concurrent_ok.load(),
+          "embedded session serializes concurrent C control-loop steps");
+
     CHECK(nexus_embedded_snapshot(s, "../bad") == CAP_ERR_ARG,
           "embedded capsule names reject paths");
 

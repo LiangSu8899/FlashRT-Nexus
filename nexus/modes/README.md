@@ -10,7 +10,6 @@ counter telemetry, C ABI mirror, deadlines as states) is fixed in
 Layout: **one directory per mode**. Family sub-grouping is introduced
 only when a family reaches two members.
 
-| Mode | Interaction pattern | Status |
+| Mode | Interaction pattern | Entry |
 |---|---|---|
-| [`rtc_action_chunk/`](rtc_action_chunk/) | embodied async inference: fire an action stage, execute the previous chunk until the new one is ready, fall back on deadline overrun | reference implementation |
-| `spec_session/` | LLM speculative-decode sessions: cycle-granular drive, committed-boundary snapshot/fork | planned — the FlashRT-side session surface exists (see the FlashRT `docs/spec_decode_contract.md`) |
+| [`rtc_action_chunk/`](rtc_action_chunk/) | embodied async inference: fire an action stage, execute the previous chunk until the new one is ready, fall back on deadline overrun | `nexus/modes/rtc_action_chunk` |

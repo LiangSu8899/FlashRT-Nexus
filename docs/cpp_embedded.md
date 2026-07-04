@@ -158,6 +158,14 @@ Loaded capsules are restored with `cap_restore_into` under the hood, because a
 loaded blob has no original live buffer addresses. Same-process snapshots use
 `cap_restore`.
 
+The bit-exact boundary is the live deployment/capture. A same-process
+snapshot/restore is bit-exact for the declared regions. A blob loaded after a
+restart is guarded by the fingerprint and restores into the current live
+regions, but the next model tick may still differ slightly from a previous
+process if the producer recaptured graphs or autotuned kernels differently.
+Pin producer autotune settings when cross-process bitwise replay is a product
+requirement.
+
 ## Gate
 
 `test_embedded_session` builds a fake model-runtime face over the stub backend
@@ -166,6 +174,7 @@ and verifies:
 - SWAP input + tick + output
 - STAGED input + tick + output
 - batched `nexus_embedded_step()`
+- multi-threaded calls serialize through one session
 - snapshot/restore
 - serialize/load + restore into current regions
 - capsule name filtering
