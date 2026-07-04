@@ -5,7 +5,11 @@ import unittest
 import numpy as np
 
 from serve.manifest import parse_manifest_text
-from serve.session import decode_images, sanitize_capsule_id
+from serve.session import (
+    decode_images,
+    normalize_image_arrays,
+    sanitize_capsule_id,
+)
 
 
 class ServeShellTests(unittest.TestCase):
@@ -32,6 +36,14 @@ serve:
         out = decode_images(payload, 1)
         self.assertEqual(out[0].shape, (224, 224, 3))
         self.assertTrue(out[0].flags["C_CONTIGUOUS"])
+
+    def test_normalize_image_arrays_rejects_non_rgb(self):
+        good = [np.zeros((224, 224, 3), dtype=np.uint8)]
+        self.assertEqual(normalize_image_arrays(good, 1)[0].shape,
+                         (224, 224, 3))
+        bad = [np.zeros((224, 224), dtype=np.uint8)]
+        with self.assertRaises(ValueError):
+            normalize_image_arrays(bad, 1)
 
     def test_capsule_id_rejects_paths(self):
         self.assertEqual(sanitize_capsule_id("episode-001"), "episode-001")

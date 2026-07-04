@@ -34,6 +34,7 @@ class CapsuleRecord:
     capsule: ctypes.c_void_p
     created_at: float
     path: Path | None = None
+    origin_restore: bool = True
 
 
 @dataclass
@@ -136,6 +137,24 @@ class ModelSession:
         self._set_prompt(request)
         self._set_state(request)
         images = decode_images(request.get("images"), self.producer.num_views)
+        return self._run_images_locked(images, request.get("seed"))
+
+    def act_arrays(self, images: list[np.ndarray], *, state: Any = None,
+                   prompt: str | None = None,
+                   seed: int | None = None) -> ActResult:
+        request: dict[str, Any] = {}
+        if prompt is not None:
+            request["prompt"] = prompt
+        if state is not None:
+            request["state"] = state
+        with self.lock:
+            self._set_prompt(request)
+            self._set_state(request)
+            normalized = normalize_image_arrays(images, self.producer.num_views)
+            return self._run_images_locked(normalized, seed)
+
+    def _run_images_locked(self, images: list[np.ndarray],
+                           seed: Any) -> ActResult:
         views = make_image_views(images)
         t0 = time.perf_counter()
         rc = self.nx.cap_model_set_input(
@@ -147,7 +166,7 @@ class ModelSession:
         )
         if rc != CAP_OK:
             raise RuntimeError(f"cap_model_set_input(images) rc={rc}")
-        self._seed_noise(request.get("seed"))
+        self._seed_noise(seed)
         rc = self.nx.cap_model_tick(self.ctx, self.model)
         if rc != CAP_OK:
             err = _decode(self.nx.cap_model_last_error(self.model))
@@ -182,7 +201,8 @@ class ModelSession:
         if old is not None:
             self.nx.cap_capsule_drop(self.ctx, old.capsule)
         self.capsules[cap_id] = CapsuleRecord(
-            capsule=ctypes.c_void_p(cap), created_at=time.time(), path=path)
+            capsule=ctypes.c_void_p(cap), created_at=time.time(), path=path,
+            origin_restore=True)
         return cap_id
 
     def reset(self, cap_id: str) -> None:
@@ -193,9 +213,15 @@ class ModelSession:
         rec = self.capsules.get(cap_id)
         if rec is None:
             raise KeyError(cap_id)
-        rc = self.nx.cap_restore(self.ctx, rec.capsule, self.stream)
+        if rec.origin_restore:
+            rc = self.nx.cap_restore(self.ctx, rec.capsule, self.stream)
+        else:
+            boundary = self._boundary()
+            rc = self.nx.cap_restore_into(
+                self.ctx, rec.capsule, boundary.regions,
+                boundary.n_regions, self.stream)
         if rc != CAP_OK:
-            raise RuntimeError(f"cap_restore rc={rc}")
+            raise RuntimeError(f"capsule restore rc={rc}")
         self.nx.cap_sync(self.ctx, self.stream)
 
     def _port(self, name: str) -> int:
@@ -329,6 +355,7 @@ class ModelSession:
                 capsule=ctypes.c_void_p(cap),
                 created_at=path.stat().st_mtime,
                 path=path,
+                origin_restore=False,
             )
 
 
@@ -351,7 +378,20 @@ def decode_images(payload: Any, expected_views: int) -> list[np.ndarray]:
             raise ValueError(
                 f"image bytes mismatch: got {len(data)}, expected {expected}")
         frames.append(np.frombuffer(data, dtype=np.uint8).reshape(height, width, 3))
-    return [np.ascontiguousarray(f) for f in frames]
+    return normalize_image_arrays(frames, expected_views)
+
+
+def normalize_image_arrays(images: list[np.ndarray],
+                           expected_views: int) -> list[np.ndarray]:
+    if not isinstance(images, list) or len(images) != expected_views:
+        raise ValueError(f"images must contain {expected_views} frames")
+    out = []
+    for im in images:
+        arr = np.asarray(im)
+        if arr.dtype != np.uint8 or arr.ndim != 3 or arr.shape[2] != 3:
+            raise ValueError("each image must be uint8 HWC RGB")
+        out.append(np.ascontiguousarray(arr))
+    return out
 
 
 def make_image_views(images: list[np.ndarray]) -> ctypes.Array:
