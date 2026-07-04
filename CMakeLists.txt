@@ -26,6 +26,7 @@ target_link_libraries(capsule_host PUBLIC capsule_core)
 add_library(nexus_l2 STATIC
   nexus/schedulers/stage_dag.cpp
   nexus/schedulers/stage_dag_c.cpp
+  nexus/embedded/session.cpp
   nexus/state/graph_store.cpp
   nexus/modes/rtc_action_chunk/rtc_action_chunk.cpp
   nexus/modes/rtc_action_chunk/rtc_action_chunk_c.cpp)
@@ -55,6 +56,10 @@ add_test(NAME conformance COMMAND test_conformance)
 add_executable(test_nexus_l2 tests/test_nexus_l2.cpp)
 target_link_libraries(test_nexus_l2 PRIVATE nexus_l2 capsule_backend_stub)
 add_test(NAME nexus_l2 COMMAND test_nexus_l2)
+
+add_executable(test_embedded_session tests/test_embedded_session.cpp)
+target_link_libraries(test_embedded_session PRIVATE nexus_l2 capsule_backend_stub)
+add_test(NAME embedded_session COMMAND test_embedded_session)
 
 # ---- L0: FlashRT exec backend (optional; needs CUDA + libflashrt_exec) ------
 # Configure with:
@@ -105,6 +110,7 @@ if(CAPSULE_BUILD_FLASHRT_BACKEND)
     host/src/model_runtime.cpp
     nexus/schedulers/stage_dag.cpp
     nexus/schedulers/stage_dag_c.cpp
+    nexus/embedded/session.cpp
     nexus/state/graph_store.cpp
     nexus/modes/rtc_action_chunk/rtc_action_chunk.cpp
     nexus/modes/rtc_action_chunk/rtc_action_chunk_c.cpp
