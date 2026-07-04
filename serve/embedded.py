@@ -12,7 +12,7 @@ from typing import Any
 import numpy as np
 
 from .deployment import Deployment, open_deployment
-from .session import ActResult
+from .session import ActArrayResult
 
 
 class EmbeddedSession:
@@ -42,7 +42,8 @@ class EmbeddedSession:
         return self.session.state()
 
     def act(self, images: list[np.ndarray], *, state: Any = None,
-            prompt: str | None = None, seed: int | None = None) -> ActResult:
+            prompt: str | None = None,
+            seed: int | None = None) -> ActArrayResult:
         return self.session.act_arrays(
             images, state=state, prompt=prompt, seed=seed)
 

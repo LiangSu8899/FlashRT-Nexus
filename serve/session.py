@@ -44,6 +44,13 @@ class ActResult:
     latency_ms: float
 
 
+@dataclass
+class ActArrayResult:
+    actions: np.ndarray
+    chunk_id: int
+    latency_ms: float
+
+
 class ModelSession:
     def __init__(self, nexus_lib: str, producer: ProducerHandle,
                  capsule_dir: str | None = None):
@@ -137,11 +144,16 @@ class ModelSession:
         self._set_prompt(request)
         self._set_state(request)
         images = decode_images(request.get("images"), self.producer.num_views)
-        return self._run_images_locked(images, request.get("seed"))
+        result = self._run_images_array_locked(images, request.get("seed"))
+        return ActResult(
+            actions=result.actions.tolist(),
+            chunk_id=result.chunk_id,
+            latency_ms=result.latency_ms,
+        )
 
     def act_arrays(self, images: list[np.ndarray], *, state: Any = None,
                    prompt: str | None = None,
-                   seed: int | None = None) -> ActResult:
+                   seed: int | None = None) -> ActArrayResult:
         request: dict[str, Any] = {}
         if prompt is not None:
             request["prompt"] = prompt
@@ -151,10 +163,10 @@ class ModelSession:
             self._set_prompt(request)
             self._set_state(request)
             normalized = normalize_image_arrays(images, self.producer.num_views)
-            return self._run_images_locked(normalized, seed)
+            return self._run_images_array_locked(normalized, seed)
 
-    def _run_images_locked(self, images: list[np.ndarray],
-                           seed: Any) -> ActResult:
+    def _run_images_array_locked(self, images: list[np.ndarray],
+                                 seed: Any) -> ActArrayResult:
         views = make_image_views(images)
         t0 = time.perf_counter()
         rc = self.nx.cap_model_set_input(
@@ -175,8 +187,8 @@ class ModelSession:
         actions = self._read_actions()
         self.chunk_id += 1
         latency_ms = (time.perf_counter() - t0) * 1000.0
-        return ActResult(actions=actions.tolist(), chunk_id=self.chunk_id,
-                         latency_ms=latency_ms)
+        return ActArrayResult(actions=actions, chunk_id=self.chunk_id,
+                              latency_ms=latency_ms)
 
     def snapshot(self, name: str | None = None) -> str:
         with self.lock:
