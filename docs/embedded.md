@@ -34,9 +34,12 @@ camera/state ready -> set ports -> tick/mode step -> read actions
 ```
 
 Nexus core still owns no thread. The embedded session only owns the adopted
-model runtime, `cap_ctx`, capsule store, and mode/session state. This is the
-first no-HTTP entry; future C++/shm/ROS2 transports should call the same
-session semantics instead of adding model-specific loops.
+model runtime, `cap_ctx`, capsule store, and mode/session state.
+
+For C++ robot loops and transport adapters, use the C ABI in
+[`docs/cpp_embedded.md`](cpp_embedded.md). It exposes the same session semantics
+as POD structs and includes a batched `nexus_embedded_step()` for ROS2/shm style
+control ticks.
 
 ## Gate
 

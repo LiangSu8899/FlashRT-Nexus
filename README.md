@@ -114,6 +114,9 @@ For same-process control loops, the no-HTTP entry is
 [`serve.embedded.EmbeddedSession`](docs/embedded.md): open the same manifest,
 write image/state buffers directly, tick the adopted model runtime, and read
 actions without JSON/base64/socket overhead.
+The C/C++ form for robot loops and transport adapters is
+[`nexus/embedded/session.h`](nexus/embedded/session.h), documented in
+[`docs/cpp_embedded.md`](docs/cpp_embedded.md).
 
 Core + stub (no GPU, no third-party dependency — needs only a C++17 compiler):
 
