@@ -5,7 +5,7 @@ import unittest
 import numpy as np
 
 from serve.manifest import parse_manifest_text
-from serve.session import decode_images
+from serve.session import decode_images, sanitize_capsule_id
 
 
 class ServeShellTests(unittest.TestCase):
@@ -32,6 +32,13 @@ serve:
         out = decode_images(payload, 1)
         self.assertEqual(out[0].shape, (224, 224, 3))
         self.assertTrue(out[0].flags["C_CONTIGUOUS"])
+
+    def test_capsule_id_rejects_paths(self):
+        self.assertEqual(sanitize_capsule_id("episode-001"), "episode-001")
+        for bad in ("../episode", "/tmp/episode", "", "a/b", "x" * 129):
+            with self.subTest(bad=bad):
+                with self.assertRaises(ValueError):
+                    sanitize_capsule_id(bad)
 
 
 if __name__ == "__main__":

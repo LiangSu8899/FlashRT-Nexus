@@ -115,6 +115,8 @@ def bind_nexus(nx: ctypes.CDLL) -> None:
         "cap_swap": (i, [p, p, p, ctypes.c_size_t, i]),
         "cap_sync": (i, [p, i]),
         "cap_snapshot": (p, [p, p, i, i]),
+        "cap_serialize": (i, [p, p, p, ctypes.POINTER(ctypes.c_size_t)]),
+        "cap_load": (p, [p, p, ctypes.c_size_t]),
         "cap_restore": (i, [p, p, i]),
         "cap_capsule_drop": (None, [p, p]),
     }
