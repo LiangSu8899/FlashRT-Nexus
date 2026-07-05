@@ -44,9 +44,9 @@ def _build_pi05(model_cfg: dict[str, Any],
     checkpoint = optional_str(model_cfg, "checkpoint")
     if not checkpoint:
         raise ManifestError("model.checkpoint is required")
-    precision = optional_str(model_cfg, "precision", "fp16")
-    if precision not in ("fp16", "fp8"):
-        raise ManifestError("model.precision must be fp16 or fp8")
+    precision = optional_str(model_cfg, "precision", "fp8")
+    if precision not in ("fp16", "fp8", "fp4"):
+        raise ManifestError("model.precision must be fp16, fp8, or fp4")
     stage_plan = optional_str(model_cfg, "stage_plan", "full")
     io_face = optional_str(model_cfg, "io", "native")
     if io_face != "native":
@@ -69,7 +69,8 @@ def _build_pi05(model_cfg: dict[str, Any],
         num_views=num_views,
         num_steps=steps,
         cache_frames=1,
-        use_fp8=(precision == "fp8"),
+        use_fp4=(precision == "fp4"),
+        use_fp8=(precision in ("fp8", "fp4")),
         use_fp16=(precision == "fp16"),
     )
     if enable_context_action is not None:
