@@ -40,8 +40,12 @@ def snapshot_boundary(session):
              "tokens_generated": b["tokens_generated"],
              "tok": session.tok.clone(),
              "generated": list(session.generated)}
-    for key in ("lin_state", "lin_conv_state", "drafter_window",
-                "taps_row0"):
+    for key in ("spec_attempts", "spec_accepts", "spec_full",
+                "policy_in_think"):
+        if key in b:
+            saved[key] = bool(b[key]) if key == "policy_in_think" else int(b[key])
+    for key in ("lin_state", "lin_conv_state", "drafter_shift_window",
+                "drafter_window", "taps_row0"):
         if key in b:
             saved[key] = b[key].clone()
     if "drafter_window_valid" in b:
@@ -59,8 +63,8 @@ def restore_boundary(session, saved) -> None:
     import torch
 
     b = session.boundary()
-    for key in ("lin_state", "lin_conv_state", "drafter_window",
-                "taps_row0"):
+    for key in ("lin_state", "lin_conv_state", "drafter_shift_window",
+                "drafter_window", "taps_row0"):
         if key in saved:
             b[key].copy_(saved[key])
     if "drafter_window_valid" in saved:
@@ -73,6 +77,13 @@ def restore_boundary(session, saved) -> None:
     session.cur_pos = saved["cur_pos"]
     session.tok = saved["tok"].clone()
     session.generated = list(saved["generated"])
+    for key, attr in (("spec_attempts", "_spec_attempts"),
+                      ("spec_accepts", "_spec_accepts"),
+                      ("spec_full", "_spec_full")):
+        if key in saved:
+            setattr(session.fe, attr, int(saved[key]))
+    if "policy_in_think" in saved and hasattr(session.policy, "in_think"):
+        session.policy.in_think = bool(saved["policy_in_think"])
     torch.cuda.synchronize()
 
 
@@ -97,7 +108,9 @@ def run_planner_only(args) -> int:
     ids = fe._tokenizer.apply_chat_template(
         [{"role": "user", "content": PLAN_PROMPT}],
         add_generation_prompt=True, enable_thinking=True,
-        return_tensors="pt").to(fe.device)
+        return_tensors="pt")
+    from flash_rt.frontends.torch.spec_session import as_input_ids_tensor
+    ids = as_input_ids_tensor(ids, device=fe.device)
 
     session = fe.make_dflash_session(
         max_new_tokens=args.max_tokens, K=15)
