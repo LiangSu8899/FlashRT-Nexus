@@ -10,11 +10,12 @@ state-first way to make them coexist:
   (~90 ms on Jetson AGX Thor for Qwen3.6-27B DFlash) is the
   preemption grid — the control loop interrupts *between* cycles,
   never mid-kernel;
-- the session's committed boundary is a **restorable state set**
-  (KV, recurrent/conv state, drafter feature window, cursor) — the
-  planner can be snapshotted on a task switch and resumed later with
-  its speculation acceptance rate intact (no warm-up ramp, the
-  drafter window comes back with it);
+- the session's committed boundary exposes the **device-state set**
+  (KV, recurrent/conv state, drafter feature window, cursor) that the
+  host snapshot copies together with its token journal; the planner can
+  be snapshotted on a task switch and resumed later with its speculation
+  acceptance rate intact (no warm-up ramp, the drafter window comes
+  back with it);
 - the actor runs through the Nexus **RTC action-chunk mode**
   (`examples/pi05_rtc`) and never blocks on the planner.
 
@@ -50,11 +51,11 @@ control tick (fixed cadence)
 
 ```bash
 export FLASHRT_DIR=/path/to/FlashRT
-export FLASHRT_QWEN36_MTP_CKPT_DIR=/models/Qwen3.6-27B-FP8
-export FLASHRT_QWEN36_DFLASH_CKPT_DIR=/models/Qwen3.6-27B-DFlash
+export FLASHRT_QWEN36_MTP_CKPT_DIR=$QWEN36_MTP_CKPT
+export FLASHRT_QWEN36_DFLASH_CKPT_DIR=$QWEN36_DFLASH_CKPT
 
 python examples/qwen36_spec_planner/run.py \
-  --checkpoint /models/Qwen3.6-27B-NVFP4 \
+  --checkpoint $QWEN36_NVFP4_CKPT \
   --planner-only --max-tokens 192
 ```
 
@@ -78,11 +79,12 @@ the original continuation token-for-token.
 
 ## Where this sits in the tree
 
-The planner-side snapshot/restore here is deliberately host-level
-(clones of the `boundary()` set): it demonstrates the *contract*. The
-follow-up is mechanical: register the same named buffers as capsule
-regions through the producer export so `cap_boundary` /
-`cap_restore_into` / fork do the same job engine-side — see
+The planner-side snapshot/restore here is deliberately host-level: it
+clones the `boundary()` device-state set and preserves the token
+journal/cursor in Python. The follow-up is mechanical: register the
+same named buffers as capsule regions through the producer export so
+`cap_boundary` / `cap_restore_into` / fork do the same job engine-side
+while the host keeps request-level token state — see
 [`docs/adaptation_map.md`](../../docs/adaptation_map.md) (producer
 row) and [`docs/modes.md`](../../docs/modes.md) (a spec-session mode
 is the natural second mode in `nexus/modes/`).

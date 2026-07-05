@@ -4,7 +4,7 @@
 See README.md in this directory. The planner is a FlashRT
 speculative-decode session (Qwen3.6-27B DFlash) driven one cycle at a
 time; the committed boundary between cycles is both the preemption
-grid and the restorable state set.
+grid and the device-state set copied by the host snapshot.
 """
 from __future__ import annotations
 
@@ -31,8 +31,7 @@ PLAN_PROMPT = (
 
 
 def snapshot_boundary(session):
-    """Host-level snapshot of the committed boundary (see README:
-    the capsule-region registration is the engine-side follow-up)."""
+    """Host-level snapshot: device boundary plus token journal."""
     import torch
 
     b = session.boundary()
