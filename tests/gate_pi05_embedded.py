@@ -90,7 +90,7 @@ model:
   config: pi05
   framework: torch
   hardware: auto
-  precision: fp16
+  precision: ${{PI05_PRECISION:-fp8}}
   num_views: 3
   steps: 10
   stage_plan: full
