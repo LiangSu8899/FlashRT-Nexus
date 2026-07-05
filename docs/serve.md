@@ -167,7 +167,7 @@ model:
   config: pi05
   framework: torch
   hardware: auto
-  precision: ${PI05_PRECISION:-fp8}
+  precision: ${PI05_PRECISION:-fp8}   # fp8, fp16, or fp4 when supported
   num_views: 3
   steps: 10
   stage_plan: full
