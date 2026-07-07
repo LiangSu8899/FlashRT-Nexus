@@ -62,6 +62,13 @@ add_executable(test_action_chunk tests/test_action_chunk.cpp)
 target_link_libraries(test_action_chunk PRIVATE nexus_l2 capsule_backend_stub)
 add_test(NAME action_chunk COMMAND test_action_chunk)
 
+# Golden-vector oracle replay; skips unless NEXUS_AC_VECTORS points at a
+# generated vector file (the vectors are reference-seeded, not in-repo).
+add_executable(test_action_chunk_oracle tests/test_action_chunk_oracle.cpp)
+target_link_libraries(test_action_chunk_oracle
+  PRIVATE nexus_l2 capsule_backend_stub)
+add_test(NAME action_chunk_oracle COMMAND test_action_chunk_oracle)
+
 add_executable(test_embedded_session tests/test_embedded_session.cpp)
 target_link_libraries(test_embedded_session PRIVATE nexus_l2 capsule_backend_stub)
 add_test(NAME embedded_session COMMAND test_embedded_session)

@@ -43,7 +43,8 @@ int ActionChunkMode::config_from_output_port(
 
 int ActionChunkMode::validate(const ActionChunkConfig& config) {
     if (config.prepare_policy != kActionChunkPrepareNone) return CAP_ERR_ARG;
-    if (config.consume_policy != kActionChunkConsumePlain) return CAP_ERR_ARG;
+    if (config.consume_policy > kActionChunkConsumeTemporalFusion)
+        return CAP_ERR_ARG;
     if (config.switch_mode > kActionChunkSwitchState) return CAP_ERR_ARG;
     if (config.miss_policy > kActionChunkMissHoldLast) return CAP_ERR_ARG;
     if (config.scalar_dtype > kActionChunkDtypeF16) return CAP_ERR_ARG;
@@ -51,6 +52,30 @@ int ActionChunkMode::validate(const ActionChunkConfig& config) {
         return CAP_ERR_ARG;
     if (config.distance_metric > 1) return CAP_ERR_ARG;
     if (config.candidates > 1) return CAP_ERR_ARG;
+
+    const bool chunked = config.output_port != UINT32_MAX &&
+                         config.chunk_length && config.action_bytes;
+    const bool non_plain = config.consume_policy != kActionChunkConsumePlain;
+    const bool state_switch = non_plain &&
+                              config.switch_mode == kActionChunkSwitchState;
+    const bool fusion =
+        config.consume_policy == kActionChunkConsumeTemporalFusion;
+    if (non_plain && !chunked) return CAP_ERR_ARG;
+    if (state_switch && config.state_dim == 0) return CAP_ERR_ARG;
+    /* Policies that do arithmetic on action values need a typed view; only
+     * f32 arithmetic is implemented (and oracle-gated) so far. */
+    if ((state_switch || fusion) &&
+        (config.scalar_dtype != kActionChunkDtypeF32 ||
+         config.action_bytes % 4))
+        return CAP_ERR_ARG;
+    if (fusion) {
+        const uint32_t max_chunks =
+            config.fusion_max_chunks ? config.fusion_max_chunks : 3;
+        if (config.ring_slots < max_chunks + 1) return CAP_ERR_ARG;
+        if (!(config.fusion_decay >= 0.0) ||
+            config.fusion_decay > 1e6)
+            return CAP_ERR_ARG;
+    }
     return CAP_OK;
 }
 
@@ -68,10 +93,22 @@ ActionChunkMode::ActionChunkMode(
         slot_start_step_.resize(config_.ring_slots, 0);
         if (config_.miss_policy == kActionChunkMissHoldLast)
             held_.resize(config_.action_bytes);
+        slot_valid_.resize(config_.ring_slots, 0);
+        if (config_.consume_policy == kActionChunkConsumeTemporalFusion) {
+            if (config_.fusion_max_chunks == 0) config_.fusion_max_chunks = 3;
+            weight_table_.resize(config_.chunk_length);
+            for (uint32_t j = 0; j < config_.chunk_length; ++j)
+                weight_table_[j] =
+                    std::exp(-config_.fusion_decay * static_cast<double>(j));
+            fused_.resize(chunk_bytes_);
+            fusion_acc_.resize(config_.action_bytes / 4, 0.0);
+            retained_.reserve(config_.ring_slots);
+        }
     }
     if (config_.state_dim) {
         state_latest_.resize(config_.state_dim, 0.0f);
         state_fire_.resize(config_.state_dim, 0.0f);
+        state_cum_.resize(config_.state_dim, 0.0);
     }
 }
 
@@ -102,9 +139,27 @@ int ActionChunkMode::commit_request() {
     }
     begun_ = false;
     if (chunking_enabled()) {
-        int next = active_slot_ < 0 ? 0 : (active_slot_ + 1) %
-                                           (int)config_.ring_slots;
-        pending_slot_ = next;
+        if (config_.consume_policy == kActionChunkConsumeTemporalFusion) {
+            /* Retained raw chunks are immutable; fire into a free slot, or
+             * evict the oldest retained chunk. Chunks are equal-length with
+             * monotonic starts, so anything older than the newest
+             * fusion_max_chunks chunks can never enter a fusion window --
+             * eviction is exactly equivalent to unbounded retention. */
+            int slot = -1;
+            for (uint32_t s = 0; s < config_.ring_slots; ++s)
+                if (!slot_valid_[s]) { slot = static_cast<int>(s); break; }
+            if (slot < 0) {
+                slot = retained_.front();
+                retained_.erase(retained_.begin());
+                slot_valid_[slot] = 0;
+                ++pruned_chunks_;
+            }
+            pending_slot_ = slot;
+        } else {
+            int next = active_slot_ < 0 ? 0 : (active_slot_ + 1) %
+                                               (int)config_.ring_slots;
+            pending_slot_ = next;
+        }
     }
     int rc = runner_->fire(config_.action_stage);
     if (rc != CAP_OK) {
@@ -146,12 +201,29 @@ ActionChunkState ActionChunkMode::poll() {
                 return ActionChunkState::kError;
             }
             slot_ready_step_[pending_slot_] = action_step_;
-            /* consume = plain: the ready chunk is seated immediately,
-             * addresses the grid from its fire step, consumed from index 0. */
+            /* Every consume policy anchors the chunk at its fire step. */
             slot_start_step_[pending_slot_] = slot_fire_step_[pending_slot_];
-            active_slot_ = pending_slot_;
-            pending_slot_ = -1;
-            active_index_ = 0;
+            if (active_slot_ >= 0) ++chunk_switches_;
+            int seat_rc = CAP_OK;
+            switch (config_.consume_policy) {
+                case kActionChunkConsumeSwitch:
+                    seat_rc = seat_switch();
+                    break;
+                case kActionChunkConsumeTemporalFusion:
+                    seat_rc = seat_fusion();
+                    break;
+                default:  /* plain: seat immediately, consume from index 0 */
+                    active_slot_ = pending_slot_;
+                    pending_slot_ = -1;
+                    active_index_ = 0;
+                    break;
+            }
+            if (seat_rc != CAP_OK) {
+                last_error_ = seat_rc;
+                in_flight_ = false;
+                pending_slot_ = -1;
+                return ActionChunkState::kError;
+            }
         }
         in_flight_ = false;
         pending_ticks_ = 0;
@@ -210,7 +282,9 @@ ActionChunkState ActionChunkMode::next_action(void* out, uint64_t capacity,
         last_error_ = CAP_ERR_ARG;
         return ActionChunkState::kError;
     }
-    const unsigned char* src = slot_ptr(active_slot_) +
+    const unsigned char* base =
+        consume_fused_ ? fused_.data() : slot_ptr(active_slot_);
+    const unsigned char* src = base +
         static_cast<uint64_t>(active_index_) * config_.action_bytes;
     std::memcpy(out, src, config_.action_bytes);
     if (!held_.empty()) {
@@ -280,6 +354,9 @@ void ActionChunkMode::reset() {
     in_flight_ = false;
     begun_ = false;
     has_held_ = false;
+    consume_fused_ = false;
+    retained_.clear();
+    std::fill(slot_valid_.begin(), slot_valid_.end(), 0);
     pending_ticks_ = 0;
     pending_slot_ = -1;
     active_slot_ = -1;
@@ -301,6 +378,155 @@ bool ActionChunkMode::chunking_enabled() const {
 
 unsigned char* ActionChunkMode::slot_ptr(int slot) {
     return storage_.data() + static_cast<uint64_t>(slot) * chunk_bytes_;
+}
+
+uint32_t ActionChunkMode::latency_index(uint64_t start_step) const {
+    int64_t idx = static_cast<int64_t>(action_step_ - start_step) +
+                  config_.switch_offset;
+    if (idx < 0) idx = 0;
+    const int64_t last = static_cast<int64_t>(config_.chunk_length) - 1;
+    if (idx > last) idx = last;
+    return static_cast<uint32_t>(idx);
+}
+
+/* Reference semantics: estimate the state each action index implies (f64),
+ * pick the index closest to the measured state. Estimates read the f32
+ * action values (for fusion: the f32-cast fused chunk, matching the
+ * reference, which searches the cast array). Distances accumulate in
+ * declaration order; cross-implementation equality is tolerance-graded,
+ * the argmin index is exact (ties: lowest index wins). */
+int ActionChunkMode::state_index(const unsigned char* chunk,
+                                 uint32_t* out) const {
+    const uint32_t action_dim = config_.action_bytes / 4;
+    const uint32_t state_dim = config_.state_dim;
+    if (!has_state_) return CAP_ERR_ARG;
+    if (state_action_indices_.empty()) {
+        if (state_dim > action_dim) return CAP_ERR_ARG;
+    } else {
+        if (state_action_indices_.size() != state_dim) return CAP_ERR_ARG;
+        for (uint32_t idx : state_action_indices_)
+            if (idx >= action_dim) return CAP_ERR_ARG;
+    }
+    std::vector<double>& cum = const_cast<std::vector<double>&>(state_cum_);
+    std::fill(cum.begin(), cum.end(), 0.0);
+    double best = 0.0;
+    uint32_t best_index = 0;
+    for (uint32_t i = 0; i < config_.chunk_length; ++i) {
+        const float* row = reinterpret_cast<const float*>(
+            chunk + static_cast<uint64_t>(i) * config_.action_bytes);
+        double dist = 0.0;
+        for (uint32_t k = 0; k < state_dim; ++k) {
+            const uint32_t col =
+                state_action_indices_.empty() ? k : state_action_indices_[k];
+            const double a = static_cast<double>(row[col]);
+            double estimate;
+            switch (config_.action_representation) {
+                case kActionChunkReprDeltaCumulative:
+                    cum[k] += a;
+                    estimate = static_cast<double>(state_fire_[k]) + cum[k];
+                    break;
+                case kActionChunkReprDeltaFromStart:
+                    estimate = static_cast<double>(state_fire_[k]) + a;
+                    break;
+                default:
+                    estimate = a;
+                    break;
+            }
+            const double diff =
+                estimate - static_cast<double>(state_latest_[k]);
+            dist += config_.distance_metric ? diff * diff : std::fabs(diff);
+        }
+        if (config_.distance_metric) dist = std::sqrt(dist);
+        if (i == 0 || dist < best) {
+            best = dist;
+            best_index = i;
+        }
+    }
+    *out = best_index;
+    return CAP_OK;
+}
+
+int ActionChunkMode::seat_switch() {
+    uint32_t index = 0;
+    if (config_.switch_mode == kActionChunkSwitchState) {
+        int rc = state_index(slot_ptr(pending_slot_), &index);
+        if (rc != CAP_OK) return rc;
+    } else {
+        index = latency_index(slot_start_step_[pending_slot_]);
+    }
+    active_slot_ = pending_slot_;
+    pending_slot_ = -1;
+    active_index_ = index;
+    consume_fused_ = false;
+    return CAP_OK;
+}
+
+void ActionChunkMode::prune_expired() {
+    size_t keep = 0;
+    for (size_t r = 0; r < retained_.size(); ++r) {
+        const int slot = retained_[r];
+        if (slot_start_step_[slot] + config_.chunk_length <= action_step_) {
+            slot_valid_[slot] = 0;
+            ++pruned_chunks_;
+        } else {
+            retained_[keep++] = retained_[r];
+        }
+    }
+    retained_.resize(keep);
+}
+
+int ActionChunkMode::seat_fusion() {
+    prune_expired();
+    slot_valid_[pending_slot_] = 1;
+    retained_.push_back(pending_slot_);
+
+    /* Fuse on the newest chunk's step window: per index, the newest (at most
+     * fusion_max_chunks) retained chunks covering that step contribute
+     * exp-decay weights from the table; f64 accumulation in newest-first
+     * order, one divide, cast to f32. Raw chunks stay immutable. */
+    const uint64_t start = slot_start_step_[pending_slot_];
+    const uint32_t length = config_.chunk_length;
+    const uint32_t action_dim = config_.action_bytes / 4;
+    for (uint32_t i = 0; i < length; ++i) {
+        const uint64_t step = start + i;
+        std::fill(fusion_acc_.begin(), fusion_acc_.end(), 0.0);
+        double weight_sum = 0.0;
+        uint32_t count = 0;
+        for (auto it = retained_.rbegin();
+             it != retained_.rend() && count < config_.fusion_max_chunks;
+             ++it) {
+            const int slot = *it;
+            const uint64_t slot_start = slot_start_step_[slot];
+            if (step < slot_start || step >= slot_start + length) continue;
+            const uint32_t source_i = static_cast<uint32_t>(step - slot_start);
+            const double w =
+                weight_table_[source_i >= i ? source_i - i : i - source_i];
+            const float* row = reinterpret_cast<const float*>(
+                slot_ptr(slot) +
+                static_cast<uint64_t>(source_i) * config_.action_bytes);
+            for (uint32_t k = 0; k < action_dim; ++k)
+                fusion_acc_[k] += w * static_cast<double>(row[k]);
+            weight_sum += w;
+            ++count;
+        }
+        float* fused_row = reinterpret_cast<float*>(
+            fused_.data() + static_cast<uint64_t>(i) * config_.action_bytes);
+        for (uint32_t k = 0; k < action_dim; ++k)
+            fused_row[k] = static_cast<float>(fusion_acc_[k] / weight_sum);
+    }
+
+    uint32_t index = 0;
+    if (config_.switch_mode == kActionChunkSwitchState) {
+        int rc = state_index(fused_.data(), &index);
+        if (rc != CAP_OK) return rc;
+    } else {
+        index = latency_index(start);
+    }
+    active_slot_ = pending_slot_;
+    pending_slot_ = -1;
+    active_index_ = index;
+    consume_fused_ = true;
+    return CAP_OK;
 }
 
 int ActionChunkMode::copy_output_to_pending_slot() {

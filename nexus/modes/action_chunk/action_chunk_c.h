@@ -33,7 +33,9 @@ enum nexus_ac_prepare_policy {
 };
 
 enum nexus_ac_consume_policy {
-    NEXUS_AC_CONSUME_PLAIN = 0
+    NEXUS_AC_CONSUME_PLAIN = 0,
+    NEXUS_AC_CONSUME_SWITCH = 1,
+    NEXUS_AC_CONSUME_TEMPORAL_FUSION = 2
 };
 
 enum nexus_ac_switch_mode {
@@ -86,7 +88,10 @@ typedef struct nexus_action_chunk_config {
     uint8_t  reserved3;
     uint32_t state_dim;         /* 0 = no state feed                        */
     uint32_t candidates;        /* 0 or 1 = single fire (reserved)          */
-    uint32_t reserved4[6];
+    uint32_t reserved4;
+    double   fusion_decay;      /* f64: the reference semantics are f64     */
+    uint32_t fusion_max_chunks; /* 0 = default 3                            */
+    int32_t  switch_offset;     /* switch(latency): idx = clip(d + offset)  */
 } nexus_action_chunk_config;
 
 typedef struct nexus_action_chunk_s nexus_action_chunk;
