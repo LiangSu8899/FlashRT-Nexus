@@ -1,12 +1,14 @@
-/* nexus/modes/rtc_action_chunk/rtc_action_chunk.h — RTC action-chunk scheduler mode.
+/* nexus/modes/action_chunk/action_chunk.h — generic action-chunk scheduler mode.
  *
- * This mode lives in Nexus, not in FlashRT runtime. It is an outer-loop state
+ * This mode lives in Nexus, not in FlashRT runtime. It is model-agnostic:
+ * any VLA policy exposing an action-chunk output port drives it with the
+ * same verbs; Pi0.5 is the first gated instance. It is an outer-loop state
  * machine over a declared action stage: fire asynchronously, poll completion,
  * and let the robot loop keep executing the previous action chunk until a new
  * one is ready or fallback is required.
  */
-#ifndef NEXUS_MODES_RTC_ACTION_CHUNK_H
-#define NEXUS_MODES_RTC_ACTION_CHUNK_H
+#ifndef NEXUS_MODES_ACTION_CHUNK_H
+#define NEXUS_MODES_ACTION_CHUNK_H
 
 #include "nexus/schedulers/stage_dag.h"
 
@@ -15,7 +17,7 @@
 
 namespace nexus {
 
-enum class RtcChunkState {
+enum class ActionChunkState {
     kIdle,
     kPending,
     kReady,
@@ -23,7 +25,7 @@ enum class RtcChunkState {
     kError,
 };
 
-struct RtcActionChunkConfig {
+struct ActionChunkConfig {
     uint64_t action_stage = 0;
     uint32_t output_port = UINT32_MAX;  /* UINT32_MAX: no output copy */
     uint32_t chunk_length = 0;          /* actions per chunk          */
@@ -33,7 +35,7 @@ struct RtcActionChunkConfig {
     int deadline_ticks = -1;            /* <0 disables fallback mark  */
 };
 
-class RtcActionChunkMode {
+class ActionChunkMode {
 public:
     /* Build config from an ACTION output port shape:
      *   shape[0] = chunk length, shape[1:] = one action.
@@ -46,16 +48,16 @@ public:
                                        uint32_t ring_slots,
                                        uint32_t execute_horizon,
                                        int deadline_ticks,
-                                       RtcActionChunkConfig* out);
+                                       ActionChunkConfig* out);
 
-    RtcActionChunkMode(StageDagRunner* runner,
-                       const RtcActionChunkConfig& config);
-    RtcActionChunkMode(StageDagRunner* runner, uint64_t action_stage,
+    ActionChunkMode(StageDagRunner* runner,
+                       const ActionChunkConfig& config);
+    ActionChunkMode(StageDagRunner* runner, uint64_t action_stage,
                        int max_pending_polls);
 
     int request();
-    RtcChunkState poll();
-    RtcChunkState next_action(void* out, uint64_t capacity,
+    ActionChunkState poll();
+    ActionChunkState next_action(void* out, uint64_t capacity,
                               uint64_t* written);
     void reset();
 
@@ -79,7 +81,7 @@ private:
     int copy_output_to_pending_slot();
 
     StageDagRunner* runner_ = nullptr;
-    RtcActionChunkConfig config_{};
+    ActionChunkConfig config_{};
     uint64_t chunk_bytes_ = 0;
     std::vector<unsigned char> storage_;
     int active_slot_ = -1;
@@ -100,4 +102,4 @@ private:
 
 }  // namespace nexus
 
-#endif  /* NEXUS_MODES_RTC_ACTION_CHUNK_H */
+#endif  /* NEXUS_MODES_ACTION_CHUNK_H */

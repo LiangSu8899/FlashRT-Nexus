@@ -1,6 +1,7 @@
 /* test_nexus_l2.cpp — L2 scheduler/state/mode skeletons. */
-#include "nexus/modes/rtc_action_chunk/rtc_action_chunk.h"
-#include "nexus/modes/rtc_action_chunk/rtc_action_chunk_c.h"
+#include "nexus/modes/action_chunk/action_chunk.h"
+#include "nexus/modes/action_chunk/action_chunk_c.h"
+#include "nexus/modes/action_chunk/rtc_action_chunk_compat.h"
 #include "nexus/schedulers/stage_dag_c.h"
 #include "nexus/state/graph_store.h"
 
@@ -181,47 +182,47 @@ int main() {
           "StageDagRunner supports 1:4 stage frequency with stale context");
 
     log.order.clear();
-    nexus::RtcActionChunkMode rtc(&runner, 1, 0);
-    CHECK(rtc.request() == CAP_OK && rtc.in_flight(),
-          "RTC action mode fires the action stage");
-    CHECK(rtc.poll() == nexus::RtcChunkState::kReady &&
-              !rtc.in_flight() && rtc.completed_chunks() == 1,
-          "RTC action mode reports ready completion");
+    nexus::ActionChunkMode mode(&runner, 1, 0);
+    CHECK(mode.request() == CAP_OK && mode.in_flight(),
+          "action-chunk mode fires the action stage");
+    CHECK(mode.poll() == nexus::ActionChunkState::kReady &&
+              !mode.in_flight() && mode.completed_chunks() == 1,
+          "action-chunk mode reports ready completion");
     CHECK(log.order.size() == 1 && log.order[0] == 1,
-          "RTC action mode does not run unrelated stages");
+          "action-chunk mode does not run unrelated stages");
 
-    nexus::RtcActionChunkConfig rtc_cfg{};
-    CHECK(nexus::RtcActionChunkMode::config_from_output_port(
-              &runner, 1, 0, 4, 2, 1, 4, &rtc_cfg) == CAP_OK &&
-              rtc_cfg.chunk_length == 3 && rtc_cfg.action_bytes == 4,
-          "RTC config infers action chunk shape from the output port");
+    nexus::ActionChunkConfig chunk_cfg{};
+    CHECK(nexus::ActionChunkMode::config_from_output_port(
+              &runner, 1, 0, 4, 2, 1, 4, &chunk_cfg) == CAP_OK &&
+              chunk_cfg.chunk_length == 3 && chunk_cfg.action_bytes == 4,
+          "action-chunk config infers action chunk shape from the output port");
     const int64_t groot_action_shape[2] = {50, 7};
     model_ports[0].shape = groot_action_shape;
-    nexus::RtcActionChunkConfig groot_cfg{};
-    CHECK(nexus::RtcActionChunkMode::config_from_output_port(
+    nexus::ActionChunkConfig groot_cfg{};
+    CHECK(nexus::ActionChunkMode::config_from_output_port(
               &runner, 1, 0, 4, 2, 4, 100, &groot_cfg) == CAP_OK &&
               groot_cfg.chunk_length == 50 && groot_cfg.action_bytes == 28,
-          "RTC config supports larger VLA chunks such as 50x7");
+          "action-chunk config supports larger VLA chunks such as 50x7");
     model_ports[0].shape = action_shape;
-    nexus::RtcActionChunkMode chunk_mode(&runner, rtc_cfg);
+    nexus::ActionChunkMode chunk_mode(&runner, chunk_cfg);
     CHECK(chunk_mode.request() == CAP_OK &&
-              chunk_mode.poll() == nexus::RtcChunkState::kReady &&
+              chunk_mode.poll() == nexus::ActionChunkState::kReady &&
               chunk_mode.has_active_chunk(),
-          "RTC chunk mode captures a completed action chunk");
+          "action-chunk mode captures a completed action chunk");
     unsigned char action[4] = {};
     uint64_t written = 0;
     CHECK(chunk_mode.next_action(action, sizeof(action), &written) ==
-              nexus::RtcChunkState::kReady &&
+              nexus::ActionChunkState::kReady &&
               written == sizeof(action) && action[0] == 'A' &&
               chunk_mode.remaining_actions() == 2,
-          "RTC chunk mode emits one action at a time");
+          "action-chunk mode emits one action at a time");
     CHECK(chunk_mode.next_action(action, sizeof(action), &written) ==
-              nexus::RtcChunkState::kReady &&
+              nexus::ActionChunkState::kReady &&
               chunk_mode.in_flight(),
-          "RTC chunk mode prefetches at the execute horizon");
-    CHECK(chunk_mode.poll() == nexus::RtcChunkState::kReady &&
+          "action-chunk mode prefetches at the execute horizon");
+    CHECK(chunk_mode.poll() == nexus::ActionChunkState::kReady &&
               chunk_mode.completed_chunks() == 2,
-          "RTC chunk mode accepts the prefetched chunk");
+          "action-chunk mode accepts the prefetched chunk");
 
     nexus_stage_dag* c_runner = nullptr;
     CHECK(nexus_stage_dag_create(ctx, &model, &c_runner) == CAP_OK &&
@@ -239,19 +240,34 @@ int main() {
               log.order.size() == 2 && log.order[0] == 0 &&
               log.order[1] == 1,
           "StageDAG C ABI runs due stages from frequency tables");
-    nexus_rtc_action_chunk* c_rtc = nullptr;
+    nexus_action_chunk* c_chunk = nullptr;
+    CHECK(nexus_action_chunk_create_for_output_port(
+              c_runner, 1, 0, 4, 2, 1, 4, &c_chunk) == CAP_OK && c_chunk,
+          "action-chunk C ABI creates an action-chunk mode from an output port");
+    CHECK(nexus_action_chunk_request(c_chunk) == CAP_OK &&
+              nexus_action_chunk_poll(c_chunk) == NEXUS_AC_READY,
+          "action-chunk C ABI requests and accepts a chunk");
+    CHECK(nexus_action_chunk_next_action(c_chunk, action, sizeof(action),
+                                             &written) == NEXUS_AC_READY &&
+              written == sizeof(action) &&
+              nexus_action_chunk_remaining(c_chunk) == 2,
+          "action-chunk C ABI emits one action");
+    nexus_action_chunk_destroy(c_chunk);
+
+    /* Deprecated pre-rename aliases must drive the same mode end to end. */
+    nexus_rtc_action_chunk* c_compat = nullptr;
     CHECK(nexus_rtc_action_chunk_create_for_output_port(
-              c_runner, 1, 0, 4, 2, 1, 4, &c_rtc) == CAP_OK && c_rtc,
-          "RTC C ABI creates an action-chunk mode from an output port");
-    CHECK(nexus_rtc_action_chunk_request(c_rtc) == CAP_OK &&
-              nexus_rtc_action_chunk_poll(c_rtc) == NEXUS_RTC_READY,
-          "RTC C ABI requests and accepts a chunk");
-    CHECK(nexus_rtc_action_chunk_next_action(c_rtc, action, sizeof(action),
+              c_runner, 1, 0, 4, 2, 1, 4, &c_compat) == CAP_OK && c_compat,
+          "compat aliases create the renamed action-chunk mode");
+    CHECK(nexus_rtc_action_chunk_request(c_compat) == CAP_OK &&
+              nexus_rtc_action_chunk_poll(c_compat) == NEXUS_RTC_READY,
+          "compat aliases drive request/poll");
+    CHECK(nexus_rtc_action_chunk_next_action(c_compat, action, sizeof(action),
                                              &written) == NEXUS_RTC_READY &&
               written == sizeof(action) &&
-              nexus_rtc_action_chunk_remaining(c_rtc) == 2,
-          "RTC C ABI emits one action");
-    nexus_rtc_action_chunk_destroy(c_rtc);
+              nexus_rtc_action_chunk_remaining(c_compat) == 2,
+          "compat aliases emit one action");
+    nexus_rtc_action_chunk_destroy(c_compat);
     nexus_stage_dag_destroy(c_runner);
 
     cap_backend be_async{};
@@ -269,21 +285,21 @@ int main() {
     g_event_pending = 3;
     CHECK(async_runner.fire(0) == CAP_OK,
           "async runner can fire the context stage");
-    nexus::RtcActionChunkConfig deadline_cfg{};
+    nexus::ActionChunkConfig deadline_cfg{};
     deadline_cfg.action_stage = 1;
     deadline_cfg.deadline_ticks = 1;
-    nexus::RtcActionChunkMode deadline_mode(&async_runner, deadline_cfg);
+    nexus::ActionChunkMode deadline_mode(&async_runner, deadline_cfg);
     CHECK(deadline_mode.request() == CAP_OK &&
-              deadline_mode.poll() == nexus::RtcChunkState::kPending &&
-              deadline_mode.poll() == nexus::RtcChunkState::kFallback &&
+              deadline_mode.poll() == nexus::ActionChunkState::kPending &&
+              deadline_mode.poll() == nexus::ActionChunkState::kFallback &&
               deadline_mode.in_flight() && deadline_mode.fallbacks() == 1,
-          "RTC deadline reports fallback without cancelling in-flight work");
-    CHECK(deadline_mode.poll() == nexus::RtcChunkState::kReady &&
+          "action-chunk deadline reports fallback without cancelling in-flight work");
+    CHECK(deadline_mode.poll() == nexus::ActionChunkState::kReady &&
               !deadline_mode.in_flight() &&
               deadline_mode.late_chunks() == 1 &&
               deadline_mode.last_ready_ticks() == 2 &&
               deadline_mode.max_ready_ticks() == 2,
-          "RTC accepts and accounts for a late chunk after fallback");
+          "action-chunk mode accepts and accounts for a late chunk after fallback");
     cap_ctx_destroy(ctx_async);
     stub_backend_fini(&be_async);
 

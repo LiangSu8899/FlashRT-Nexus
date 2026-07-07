@@ -38,18 +38,19 @@ was configured with, does not own scheduling policy (periods, phases,
 masks belong to the scheduler helpers), and does not reach past the
 face into producer internals.
 
-## Anatomy, using RTC action chunks as the exemplar
+## Anatomy, using action chunks as the exemplar
 
-[`nexus/modes/rtc_action_chunk/rtc_action_chunk.h`](../nexus/modes/rtc_action_chunk/rtc_action_chunk.h)
-is the reference implementation of the contract:
+[`nexus/modes/action_chunk/action_chunk.h`](../nexus/modes/action_chunk/action_chunk.h)
+is the reference implementation of the contract — the generic VLA
+action-chunk mode (Pi0.5 is its first gated instance):
 
-| Contract clause | Where RTC does it |
+| Contract clause | Where the action-chunk mode does it |
 |---|---|
-| Config struct, sized up front | `RtcActionChunkConfig` (stage, port, chunk geometry, `ring_slots`, `execute_horizon`, `deadline_ticks`); `config_from_output_port` derives geometry from the port shape |
-| State enum + non-blocking poll | `RtcChunkState {Idle, Pending, Ready, Fallback, Error}`; `poll()` advances, `next_action()` consumes |
+| Config struct, sized up front | `ActionChunkConfig` (stage, port, chunk geometry, `ring_slots`, `execute_horizon`, `deadline_ticks`); `config_from_output_port` derives geometry from the port shape |
+| State enum + non-blocking poll | `ActionChunkState {Idle, Pending, Ready, Fallback, Error}`; `poll()` advances, `next_action()` consumes |
 | Allocation at construction | the ring `storage_` is sized in the constructor; the hot path is `fire/query` + one output copy into a pre-sized slot |
 | Telemetry counters | `fallbacks / late_chunks / pending_ticks / *_ready_ticks / completed_chunks / emitted_actions` |
-| C ABI mirror | [`rtc_action_chunk_c.h`](../nexus/modes/rtc_action_chunk/rtc_action_chunk_c.h): opaque handle, `struct_size`-checked config, verb-per-function |
+| C ABI mirror | [`action_chunk_c.h`](../nexus/modes/action_chunk/action_chunk_c.h): opaque handle, `struct_size`-checked config, verb-per-function |
 | Deadline as state | `deadline_ticks < 0` disables; overrun marks `kFallback`, the robot keeps executing the previous chunk |
 
 Read it top to bottom once; every future mode should feel like a
