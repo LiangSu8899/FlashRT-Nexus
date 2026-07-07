@@ -58,6 +58,10 @@ add_executable(test_nexus_l2 tests/test_nexus_l2.cpp)
 target_link_libraries(test_nexus_l2 PRIVATE nexus_l2 capsule_backend_stub)
 add_test(NAME nexus_l2 COMMAND test_nexus_l2)
 
+add_executable(test_action_chunk tests/test_action_chunk.cpp)
+target_link_libraries(test_action_chunk PRIVATE nexus_l2 capsule_backend_stub)
+add_test(NAME action_chunk COMMAND test_action_chunk)
+
 add_executable(test_embedded_session tests/test_embedded_session.cpp)
 target_link_libraries(test_embedded_session PRIVATE nexus_l2 capsule_backend_stub)
 add_test(NAME embedded_session COMMAND test_embedded_session)
