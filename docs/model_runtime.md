@@ -66,14 +66,14 @@ The reusable L2 helpers live under `nexus/`, above this host face:
   for robot hosts and ctypes gates.
 - `nexus/state/graph_store.*` owns graph-cache budget policy over backend
   evict/count verbs.
-- `nexus/modes/rtc_action_chunk.*` is the RTC action-chunk mode:
+- `nexus/modes/action_chunk/*` is the generic action-chunk mode:
   fire an action stage, poll its completion, copy completed output chunks,
   emit one action at a time, and let the robot loop execute the previous
   chunk or fallback while the new chunk is pending.
-- `nexus/modes/rtc_action_chunk/rtc_action_chunk_c.h` exposes that mode as a C ABI. The caller
+- `nexus/modes/action_chunk/action_chunk_c.h` exposes that mode as a C ABI. The caller
   keeps the `cap_ctx`, `cap_model_runtime`, and `nexus_stage_dag` alive.
 
-For standard VLA action outputs, create the RTC mode from the producer's
+For standard VLA action outputs, create the mode from the producer's
 `actions` output port instead of hard-coding a shape. The helper reads
 `port.shape` as `(chunk_length, action_dims...)` and derives
 `action_bytes = prod(action_dims) * scalar_bytes`; `(10, 7)` and `(50, 7)` are

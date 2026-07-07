@@ -1,46 +1,36 @@
-/* nexus/modes/rtc_action_chunk/rtc_action_chunk_c.h — C ABI for Nexus RTC action chunks. */
-#ifndef NEXUS_MODES_RTC_ACTION_CHUNK_C_H
-#define NEXUS_MODES_RTC_ACTION_CHUNK_C_H
+/* nexus/modes/action_chunk/rtc_action_chunk_compat.h — DEPRECATED aliases.
+ *
+ * Compatibility layer for the pre-rename C ABI (`nexus_rtc_action_chunk_*`).
+ * The mode is now `nexus/modes/action_chunk` with the `nexus_action_chunk_*`
+ * ABI; new code must include `action_chunk_c.h` instead. These aliases are
+ * thin forwarding wrappers over the renamed entry points, kept for external
+ * consumers only, and will be removed at the next declared 0.x breaking
+ * window.
+ */
+#ifndef NEXUS_MODES_RTC_ACTION_CHUNK_COMPAT_H
+#define NEXUS_MODES_RTC_ACTION_CHUNK_COMPAT_H
 
-#include "nexus/schedulers/stage_dag_c.h"
-
-#include <stdint.h>
+#include "nexus/modes/action_chunk/action_chunk_c.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#define NEXUS_RTC_NO_OUTPUT_PORT 0xffffffffu
+#define NEXUS_RTC_NO_OUTPUT_PORT NEXUS_AC_NO_OUTPUT_PORT
 
-enum nexus_rtc_chunk_state {
-    NEXUS_RTC_IDLE = 0,
-    NEXUS_RTC_PENDING = 1,
-    NEXUS_RTC_READY = 2,
-    NEXUS_RTC_FALLBACK = 3,
-    NEXUS_RTC_ERROR = 4
-};
+#define NEXUS_RTC_IDLE NEXUS_AC_IDLE
+#define NEXUS_RTC_PENDING NEXUS_AC_PENDING
+#define NEXUS_RTC_READY NEXUS_AC_READY
+#define NEXUS_RTC_FALLBACK NEXUS_AC_FALLBACK
+#define NEXUS_RTC_ERROR NEXUS_AC_ERROR
 
-typedef struct nexus_rtc_action_chunk_config {
-    uint32_t struct_size;       /* = sizeof(nexus_rtc_action_chunk_config) */
-    uint32_t reserved;
-    uint64_t action_stage;
-    uint32_t output_port;       /* NEXUS_RTC_NO_OUTPUT_PORT disables copy   */
-    uint32_t chunk_length;      /* actions per completed chunk              */
-    uint32_t action_bytes;      /* bytes per action emitted by next_action  */
-    uint32_t ring_slots;        /* allocated at create                      */
-    uint32_t execute_horizon;   /* prefetch when remaining <= this          */
-    int32_t  deadline_ticks;    /* <0 disables fallback mark                */
-    uint32_t reserved1;
-} nexus_rtc_action_chunk_config;
-
-typedef struct nexus_rtc_action_chunk_s nexus_rtc_action_chunk;
+/* Identical layout and semantics; only the type name is legacy. */
+typedef nexus_action_chunk_config nexus_rtc_action_chunk_config;
+typedef nexus_action_chunk nexus_rtc_action_chunk;
 
 int  nexus_rtc_action_chunk_create(nexus_stage_dag*,
                                    const nexus_rtc_action_chunk_config*,
                                    nexus_rtc_action_chunk** out);
-/* Infer chunk_length/action_bytes from output_port.shape:
- * shape[0] = chunk length, shape[1:] = one action, scalar_bytes = one
- * postprocessed scalar emitted by cap_model_get_output. */
 int  nexus_rtc_action_chunk_create_for_output_port(
                                    nexus_stage_dag*,
                                    uint64_t action_stage,
@@ -77,4 +67,4 @@ int      nexus_rtc_action_chunk_last_error(nexus_rtc_action_chunk*);
 }
 #endif
 
-#endif  /* NEXUS_MODES_RTC_ACTION_CHUNK_C_H */
+#endif  /* NEXUS_MODES_RTC_ACTION_CHUNK_COMPAT_H */

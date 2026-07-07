@@ -26,7 +26,7 @@ nexus/            L2  the framework (grows here): schedulers · modes · state-s
   embedded/                     C/C++ no-HTTP session ABI for same-process control loops
   state/                        GraphStore / CapsuleStore policy over backend mechanisms
   modes/                        interaction state machines, ONE DIRECTORY PER MODE
-    rtc_action_chunk/           embodied async inference (action chunking)
+    action_chunk/               embodied async inference (action chunking)
     (next: spec_session/ — LLM speculative-decode sessions)
 serve/            L3  product shell and transports
   manifest / deployment         deployment file parsing + lifecycle opener
@@ -168,7 +168,7 @@ contract. Changes under `nexus/embedded/` or no-HTTP session code must keep
 `test_embedded_session` green — it pins SWAP/STAGED input, batched step, output readback,
 single-session concurrency serialization, snapshot/restore, and serialize/load semantics.
 The real-model gates (`tests/gate_pi05_model.py`,
-`tests/gate_pi05_export.py`, `tests/gate_pi05_rtc_action_chunk.py`, `tests/gate_pi05_embedded.py`)
+`tests/gate_pi05_export.py`, `tests/gate_pi05_action_chunk.py`, `tests/gate_pi05_embedded.py`)
 are the end-to-end reference; run them when the seam, the tick semantics, or the scheduling/embedded
 layer change.
 

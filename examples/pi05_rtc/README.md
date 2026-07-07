@@ -6,11 +6,11 @@ The reference assembly of the four layers on a real model:
 Pi0.5 FlashRT producer          exports the context_action model-runtime face
   -> backends/flashrt           adoption: graphs/buffers/regions -> capsule types
   -> nexus/schedulers/stage_dag fire/query primitives over the 2-stage DAG
-  -> nexus/modes/rtc_action_chunk
-                                the RTC state machine: fire the action stage
-                                asynchronously, execute the previous chunk
-                                until the new one is ready, fall back on
-                                deadline overrun
+  -> nexus/modes/action_chunk
+                                the action-chunk state machine: fire the action
+                                stage asynchronously, execute the previous
+                                chunk until the new one is ready, fall back
+                                on deadline overrun
 ```
 
 The interaction pattern this demonstrates is **real-time chunking**
@@ -41,7 +41,7 @@ python examples/pi05_rtc/run.py --checkpoint /path/to/pi05_checkpoint
 ```
 
 `run.py` validates the environment and delegates to the acceptance
-gate (`tests/gate_pi05_rtc_action_chunk.py`), which builds the
+gate (`tests/gate_pi05_action_chunk.py`), which builds the
 producer, adopts the model, runs the RTC mode, and checks the emitted
 chunk numerically against a plain `cap_model_tick` baseline. Add
 `--bench-iters N` for a latency profile of the async path.

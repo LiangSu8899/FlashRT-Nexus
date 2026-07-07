@@ -2,7 +2,7 @@
 """Example runner — Pi0.5 RTC action chunks over Nexus.
 
 Thin presentation wrapper: validates the environment, then delegates to
-the acceptance gate (tests/gate_pi05_rtc_action_chunk.py), which is the
+the acceptance gate (tests/gate_pi05_action_chunk.py), which is the
 single source of truth for the wiring. See README.md in this directory.
 """
 from __future__ import annotations
@@ -38,7 +38,7 @@ def main() -> None:
         _fail("pass --checkpoint /path/to/pi05_checkpoint "
               "(plus any gate options, e.g. --bench-iters 50)")
 
-    gate = os.path.join(repo_root, "tests", "gate_pi05_rtc_action_chunk.py")
+    gate = os.path.join(repo_root, "tests", "gate_pi05_action_chunk.py")
     runpy.run_path(gate, run_name="__main__")
 
 

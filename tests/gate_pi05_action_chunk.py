@@ -1,14 +1,17 @@
-"""Gate — real Pi0.5 context/action split through Nexus RTC action chunks.
+"""Gate — real Pi0.5 context/action split through the Nexus action-chunk mode.
 
 This is a production-shape host gate:
   1. FlashRT producer captures Pi0.5 full/decode/context graphs.
   2. The producer exports the context_action model-runtime face.
   3. Pi0.5 native C++ verbs override hot image/action processing.
   4. Nexus adopts the model, fires context through StageDAG, then runs the
-     action stage through the RTC action-chunk C ABI.
+     action stage through the action-chunk C ABI.
 
-Acceptance: the RTC-emitted action chunk is numerically equal to the normal
+Acceptance: the mode-emitted action chunk is numerically equal to the normal
 cap_model_tick baseline for the same image input and noise seed.
+
+--compat-abi drives the same run through the deprecated
+``nexus_rtc_action_chunk_*`` alias layer instead of the current ABI prefix.
 """
 
 from __future__ import annotations
@@ -21,6 +24,11 @@ import time
 from pathlib import Path
 
 import numpy as np
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from nexus_action_chunk_abi import (  # noqa: E402
+    CAP_OK, COMPAT_PREFIX, DEFAULT_PREFIX, NEXUS_AC_ERROR, NEXUS_AC_READY,
+    ActionChunkAbi, bind_core)
 
 
 FLASHRT_DIR = os.environ.get("FLASHRT_DIR")
@@ -50,9 +58,6 @@ FRT_RT_DTYPE_BF16 = 3
 FRT_PI05_DTYPE_BFLOAT16 = 1
 FRT_PI05_DTYPE_FLOAT16 = 2
 FRT_PI05_DTYPE_FLOAT32 = 3
-
-CAP_OK = 0
-NEXUS_RTC_READY = 2
 
 
 class FrtImageView(ctypes.Structure):
@@ -106,68 +111,6 @@ class FrtModelRuntimeV1(ctypes.Structure):
         ("retain", RetainReleaseFn),
         ("release", RetainReleaseFn),
     ]
-
-
-class NexusRtcConfig(ctypes.Structure):
-    _fields_ = [
-        ("struct_size", ctypes.c_uint32),
-        ("reserved", ctypes.c_uint32),
-        ("action_stage", ctypes.c_uint64),
-        ("output_port", ctypes.c_uint32),
-        ("chunk_length", ctypes.c_uint32),
-        ("action_bytes", ctypes.c_uint32),
-        ("ring_slots", ctypes.c_uint32),
-        ("execute_horizon", ctypes.c_uint32),
-        ("deadline_ticks", ctypes.c_int32),
-        ("reserved1", ctypes.c_uint32),
-    ]
-
-
-def bind_nexus(nx):
-    P, U64, U32, I, C = (ctypes.c_void_p, ctypes.c_uint64, ctypes.c_uint32,
-                         ctypes.c_int, ctypes.c_char_p)
-    sigs = {
-        "flashrt_adopt_model_runtime": (I, [P, ctypes.POINTER(P)]),
-        "flashrt_model_close": (None, [P]),
-        "cap_model_backend": (P, [P]),
-        "cap_model_find_port": (I, [P, C]),
-        "cap_model_port_buffer": (P, [P, U64]),
-        "cap_model_port_bytes": (U64, [P, U64]),
-        "cap_model_stage_stream": (I, [P, U64]),
-        "cap_model_set_input": (I, [P, U32, P, U64, I]),
-        "cap_model_get_output": (I, [P, U32, P, U64, ctypes.POINTER(U64), I]),
-        "cap_model_tick": (I, [P, P]),
-        "cap_ctx_create": (P, [P]),
-        "cap_ctx_destroy": (None, [P]),
-        "cap_swap": (I, [P, P, P, ctypes.c_size_t, I]),
-        "cap_sync": (I, [P, I]),
-        "nexus_stage_dag_create": (I, [P, P, ctypes.POINTER(P)]),
-        "nexus_stage_dag_destroy": (None, [P]),
-        "nexus_stage_dag_fire": (I, [P, U64]),
-        "nexus_stage_dag_query": (I, [P, U64]),
-        "nexus_stage_dag_sync": (I, [P, U64]),
-        "nexus_rtc_action_chunk_create": (I, [P, ctypes.POINTER(NexusRtcConfig),
-                                              ctypes.POINTER(P)]),
-        "nexus_rtc_action_chunk_create_for_output_port": (
-            I, [P, U64, U32, U32, U32, U32, I, ctypes.POINTER(P)]),
-        "nexus_rtc_action_chunk_destroy": (None, [P]),
-        "nexus_rtc_action_chunk_request": (I, [P]),
-        "nexus_rtc_action_chunk_poll": (I, [P]),
-        "nexus_rtc_action_chunk_next_action": (I, [P, P, U64,
-                                                   ctypes.POINTER(U64)]),
-        "nexus_rtc_action_chunk_completed": (U64, [P]),
-        "nexus_rtc_action_chunk_emitted": (U64, [P]),
-        "nexus_rtc_action_chunk_fallbacks": (I, [P]),
-        "nexus_rtc_action_chunk_late_chunks": (I, [P]),
-        "nexus_rtc_action_chunk_pending_ticks": (U32, [P]),
-        "nexus_rtc_action_chunk_last_ready_ticks": (U32, [P]),
-        "nexus_rtc_action_chunk_max_ready_ticks": (U32, [P]),
-        "nexus_rtc_action_chunk_total_ready_ticks": (U64, [P]),
-    }
-    for name, (res, args) in sigs.items():
-        fn = getattr(nx, name)
-        fn.restype = res
-        fn.argtypes = args
 
 
 def bind_pi05(lib):
@@ -257,10 +200,14 @@ def main() -> None:
     ap.add_argument("--fp8", action="store_true")
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--bench-iters", type=int, default=0)
+    ap.add_argument("--compat-abi", action="store_true",
+                    help="drive the deprecated nexus_rtc_action_chunk_* aliases")
     args = ap.parse_args()
 
     nx = ctypes.CDLL(NEXUS_LIB)
-    bind_nexus(nx)
+    bind_core(nx)
+    prefix = COMPAT_PREFIX if args.compat_abi else DEFAULT_PREFIX
+    ac = ActionChunkAbi(nx, prefix)
     pi05 = ctypes.CDLL(PI05_LIB)
     bind_pi05(pi05)
 
@@ -276,7 +223,7 @@ def main() -> None:
     pl = pipe.pipeline
 
     mr = pl.export_model_runtime(
-        identity={"gate": "nexus_pi05_rtc", "plan": "context_action"},
+        identity={"gate": "nexus_pi05_action_chunk", "plan": "context_action"},
         stage_plan="context_action",
         io="native",
     )
@@ -310,7 +257,7 @@ def main() -> None:
     cm = ctypes.c_void_p()
     ctx = ctypes.c_void_p()
     dag = ctypes.c_void_p()
-    rtc = ctypes.c_void_p()
+    mode = ctypes.c_void_p()
     try:
         if nx.flashrt_adopt_model_runtime(over_ptr, ctypes.byref(cm)) != CAP_OK:
             raise RuntimeError("flashrt_adopt_model_runtime failed")
@@ -349,31 +296,31 @@ def main() -> None:
                 raise RuntimeError(f"cap_model_get_output rc={rc} written={written.value}")
             return out
 
-        def wait_rtc_ready() -> tuple[int, float, int]:
+        def wait_chunk_ready() -> tuple[int, float, int]:
             last_state = None
             polls = 0
             t0 = time.perf_counter()
             deadline = t0 + 10.0
             while time.perf_counter() < deadline:
-                state = nx.nexus_rtc_action_chunk_poll(rtc)
+                state = ac.poll(mode)
                 polls += 1
                 last_state = state
-                if state == NEXUS_RTC_READY:
+                if state == NEXUS_AC_READY:
                     return polls, (time.perf_counter() - t0) * 1000.0, state
-                if state == 4:
-                    raise RuntimeError("rtc poll returned error")
+                if state == NEXUS_AC_ERROR:
+                    raise RuntimeError("action-chunk poll returned error")
                 time.sleep(0.0001)
             raise RuntimeError(
-                f"rtc chunk did not become ready, last_state={last_state}")
+                f"action chunk did not become ready, last_state={last_state}")
 
         def emit_chunk() -> np.ndarray:
             emitted = np.empty_like(baseline)
             written = ctypes.c_uint64(0)
             for i in range(int(pl.chunk_size)):
-                rc = nx.nexus_rtc_action_chunk_next_action(
-                    rtc, ctypes.c_void_p(emitted[i].ctypes.data), action_bytes,
+                rc = ac.next_action(
+                    mode, ctypes.c_void_p(emitted[i].ctypes.data), action_bytes,
                     ctypes.byref(written))
-                if rc != NEXUS_RTC_READY or int(written.value) != action_bytes:
+                if rc != NEXUS_AC_READY or int(written.value) != action_bytes:
                     raise RuntimeError(
                         f"next_action[{i}] rc={rc} written={written.value}")
             return emitted
@@ -389,28 +336,29 @@ def main() -> None:
             raise RuntimeError("nexus_stage_dag_create failed")
         if nx.nexus_stage_dag_fire(dag, 0) != CAP_OK:
             raise RuntimeError("context fire failed")
-        if nx.nexus_rtc_action_chunk_create_for_output_port(
+        if ac.create_for_output_port(
                 dag, 1, p_actions, 4, 2, 0, 100000,
-                ctypes.byref(rtc)) != CAP_OK:
-            raise RuntimeError("nexus_rtc_action_chunk_create_for_output_port failed")
-        if nx.nexus_rtc_action_chunk_request(rtc) != CAP_OK:
-            raise RuntimeError("rtc request failed")
-        polls, ready_ms, _ = wait_rtc_ready()
+                ctypes.byref(mode)) != CAP_OK:
+            raise RuntimeError(f"{ac.prefix}_create_for_output_port failed")
+        if ac.request(mode) != CAP_OK:
+            raise RuntimeError("action-chunk request failed")
+        polls, ready_ms, _ = wait_chunk_ready()
         emitted = emit_chunk()
 
         max_abs = float(np.max(np.abs(baseline - emitted)))
         ok = bool(np.allclose(baseline, emitted, rtol=1e-4, atol=1e-3))
-        print("\n===== NEXUS PI0.5 RTC ACTION-CHUNK GATE =====")
+        print("\n===== NEXUS PI0.5 ACTION-CHUNK GATE =====")
+        print(f"abi prefix        : {ac.prefix}")
         print(f"fingerprint       : 0x{mr.fingerprint:016x}")
         print(f"stages            : {mr.stages()}")
         print(f"chunk/actions     : {pl.chunk_size} x {LIBERO_ACTION_DIM}")
-        print(f"completed chunks  : {nx.nexus_rtc_action_chunk_completed(rtc)}")
-        print(f"emitted actions   : {nx.nexus_rtc_action_chunk_emitted(rtc)}")
+        print(f"completed chunks  : {ac.completed(mode)}")
+        print(f"emitted actions   : {ac.emitted(mode)}")
         print(f"first ready       : polls={polls} wall_ms={ready_ms:.3f} "
-              f"ready_ticks={nx.nexus_rtc_action_chunk_last_ready_ticks(rtc)}")
-        print(f"baseline vs rtc   : {ok} max_abs={max_abs:.6g}")
+              f"ready_ticks={ac.last_ready_ticks(mode)}")
+        print(f"baseline vs mode  : {ok} max_abs={max_abs:.6g}")
         if not ok:
-            raise SystemExit("FAILED: RTC emitted actions differ")
+            raise SystemExit("FAILED: mode-emitted actions differ")
 
         if args.bench_iters > 0:
             sync_ms = []
@@ -434,10 +382,10 @@ def main() -> None:
                     if nx.nexus_stage_dag_fire(dag, 0) != CAP_OK:
                         raise RuntimeError("context fire bench failed")
                 t_req = time.perf_counter()
-                if nx.nexus_rtc_action_chunk_request(rtc) != CAP_OK:
-                    raise RuntimeError("rtc request bench failed")
+                if ac.request(mode) != CAP_OK:
+                    raise RuntimeError("action-chunk request bench failed")
                 request_ms.append((time.perf_counter() - t_req) * 1000.0)
-                polls, wall_ms, _ = wait_rtc_ready()
+                polls, wall_ms, _ = wait_chunk_ready()
                 ready_lat_ms.append(wall_ms)
                 poll_counts.append(polls)
                 _ = emit_chunk()
@@ -445,23 +393,23 @@ def main() -> None:
             def p50(xs):
                 return float(np.percentile(np.asarray(xs, dtype=np.float64), 50))
 
-            total_ready = int(nx.nexus_rtc_action_chunk_total_ready_ticks(rtc))
-            completed = int(nx.nexus_rtc_action_chunk_completed(rtc))
+            total_ready = int(ac.total_ready_ticks(mode))
+            completed = int(ac.completed(mode))
             avg_ready_ticks = total_ready / completed if completed else 0.0
-            print("\n----- RTC BENCH -----")
+            print("\n----- ASYNC BENCH -----")
             print(f"sync tick p50 ms : {p50(sync_ms):.3f}")
             print(f"request p50 ms   : {p50(request_ms):.3f}")
             print(f"ready p50 ms     : {p50(ready_lat_ms):.3f}")
             print(f"polls p50        : {p50(poll_counts):.1f}")
-            print(f"ready ticks      : last={nx.nexus_rtc_action_chunk_last_ready_ticks(rtc)} "
-                  f"max={nx.nexus_rtc_action_chunk_max_ready_ticks(rtc)} "
+            print(f"ready ticks      : last={ac.last_ready_ticks(mode)} "
+                  f"max={ac.max_ready_ticks(mode)} "
                   f"avg={avg_ready_ticks:.2f}")
-            print(f"fallbacks/late   : {nx.nexus_rtc_action_chunk_fallbacks(rtc)} / "
-                  f"{nx.nexus_rtc_action_chunk_late_chunks(rtc)}")
-        print("PASS - Nexus RTC action chunk matches cap_model_tick baseline")
+            print(f"fallbacks/late   : {ac.fallbacks(mode)} / "
+                  f"{ac.late_chunks(mode)}")
+        print("PASS - Nexus action-chunk mode matches cap_model_tick baseline")
     finally:
-        if rtc:
-            nx.nexus_rtc_action_chunk_destroy(rtc)
+        if mode:
+            ac.destroy(mode)
         if dag:
             nx.nexus_stage_dag_destroy(dag)
         if ctx:

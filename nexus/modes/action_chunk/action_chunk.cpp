@@ -1,14 +1,14 @@
-#include "nexus/modes/rtc_action_chunk/rtc_action_chunk.h"
+#include "nexus/modes/action_chunk/action_chunk.h"
 
 #include <cstring>
 #include <limits>
 
 namespace nexus {
 
-int RtcActionChunkMode::config_from_output_port(
+int ActionChunkMode::config_from_output_port(
         StageDagRunner* runner, uint64_t action_stage, uint32_t output_port,
         uint32_t scalar_bytes, uint32_t ring_slots, uint32_t execute_horizon,
-        int deadline_ticks, RtcActionChunkConfig* out) {
+        int deadline_ticks, ActionChunkConfig* out) {
     if (!runner || !out || !scalar_bytes) return CAP_ERR_ARG;
     cap_model_runtime* model = runner->model();
     if (!model || output_port >= model->n_ports) return CAP_ERR_ARG;
@@ -27,7 +27,7 @@ int RtcActionChunkMode::config_from_output_port(
     if (per_action > std::numeric_limits<uint32_t>::max())
         return CAP_ERR_ARG;
 
-    RtcActionChunkConfig cfg{};
+    ActionChunkConfig cfg{};
     cfg.action_stage = action_stage;
     cfg.output_port = output_port;
     cfg.chunk_length = static_cast<uint32_t>(port.shape[0]);
@@ -39,8 +39,8 @@ int RtcActionChunkMode::config_from_output_port(
     return CAP_OK;
 }
 
-RtcActionChunkMode::RtcActionChunkMode(
-        StageDagRunner* runner, const RtcActionChunkConfig& config)
+ActionChunkMode::ActionChunkMode(
+        StageDagRunner* runner, const ActionChunkConfig& config)
     : runner_(runner), config_(config) {
     if (config_.ring_slots == 0) config_.ring_slots = 1;
     if (config_.output_port != UINT32_MAX &&
@@ -51,15 +51,15 @@ RtcActionChunkMode::RtcActionChunkMode(
     }
 }
 
-RtcActionChunkMode::RtcActionChunkMode(StageDagRunner* runner,
+ActionChunkMode::ActionChunkMode(StageDagRunner* runner,
                                        uint64_t action_stage,
                                        int max_pending_polls)
-    : RtcActionChunkMode(
+    : ActionChunkMode(
           runner,
-          RtcActionChunkConfig{action_stage, UINT32_MAX, 0, 0, 1, 1,
+          ActionChunkConfig{action_stage, UINT32_MAX, 0, 0, 1, 1,
                                max_pending_polls}) {}
 
-int RtcActionChunkMode::request() {
+int ActionChunkMode::request() {
     if (!runner_ || !runner_->ok()) return CAP_ERR_ARG;
     if (in_flight_) return CAP_ERR_ARG;
     if (chunking_enabled()) {
@@ -80,9 +80,9 @@ int RtcActionChunkMode::request() {
     return CAP_OK;
 }
 
-RtcChunkState RtcActionChunkMode::poll() {
-    if (!runner_ || !runner_->ok()) return RtcChunkState::kError;
-    if (!in_flight_) return RtcChunkState::kIdle;
+ActionChunkState ActionChunkMode::poll() {
+    if (!runner_ || !runner_->ok()) return ActionChunkState::kError;
+    if (!in_flight_) return ActionChunkState::kIdle;
     int q = runner_->query(config_.action_stage);
     if (q == 0) {
         last_ready_ticks_ = static_cast<uint32_t>(pending_ticks_);
@@ -96,7 +96,7 @@ RtcChunkState RtcActionChunkMode::poll() {
                 last_error_ = rc;
                 in_flight_ = false;
                 pending_slot_ = -1;
-                return RtcChunkState::kError;
+                return ActionChunkState::kError;
             }
             active_slot_ = pending_slot_;
             pending_slot_ = -1;
@@ -106,40 +106,40 @@ RtcChunkState RtcActionChunkMode::poll() {
         pending_ticks_ = 0;
         deadline_reported_ = false;
         ++completed_chunks_;
-        return RtcChunkState::kReady;
+        return ActionChunkState::kReady;
     }
     if (q < 0) {
         last_error_ = q;
         in_flight_ = false;
-        return RtcChunkState::kError;
+        return ActionChunkState::kError;
     }
     ++pending_ticks_;
     if (config_.deadline_ticks >= 0 &&
         pending_ticks_ > config_.deadline_ticks && !deadline_reported_) {
         deadline_reported_ = true;
         ++fallbacks_;
-        return RtcChunkState::kFallback;
+        return ActionChunkState::kFallback;
     }
-    return RtcChunkState::kPending;
+    return ActionChunkState::kPending;
 }
 
-RtcChunkState RtcActionChunkMode::next_action(void* out, uint64_t capacity,
+ActionChunkState ActionChunkMode::next_action(void* out, uint64_t capacity,
                                               uint64_t* written) {
     if (written) *written = config_.action_bytes;
-    if (!chunking_enabled() || !out) return RtcChunkState::kError;
+    if (!chunking_enabled() || !out) return ActionChunkState::kError;
     if (active_slot_ < 0) {
         if (!in_flight_) {
             int rc = request();
             if (rc != CAP_OK) {
                 last_error_ = rc;
-                return RtcChunkState::kError;
+                return ActionChunkState::kError;
             }
         }
         return poll();
     }
     if (capacity < config_.action_bytes) {
         last_error_ = CAP_ERR_ARG;
-        return RtcChunkState::kError;
+        return ActionChunkState::kError;
     }
     const unsigned char* src = slot_ptr(active_slot_) +
         static_cast<uint64_t>(active_index_) * config_.action_bytes;
@@ -154,10 +154,10 @@ RtcChunkState RtcActionChunkMode::next_action(void* out, uint64_t capacity,
         remaining_actions() <= config_.execute_horizon) {
         (void)request();  /* prefetch best-effort; explicit poll reports errs */
     }
-    return RtcChunkState::kReady;
+    return ActionChunkState::kReady;
 }
 
-void RtcActionChunkMode::reset() {
+void ActionChunkMode::reset() {
     in_flight_ = false;
     pending_ticks_ = 0;
     pending_slot_ = -1;
@@ -167,22 +167,22 @@ void RtcActionChunkMode::reset() {
     last_error_ = CAP_OK;
 }
 
-uint32_t RtcActionChunkMode::remaining_actions() const {
+uint32_t ActionChunkMode::remaining_actions() const {
     if (active_slot_ < 0 || active_index_ >= config_.chunk_length) return 0;
     return config_.chunk_length - active_index_;
 }
 
-bool RtcActionChunkMode::chunking_enabled() const {
+bool ActionChunkMode::chunking_enabled() const {
     return config_.output_port != UINT32_MAX && chunk_bytes_ &&
            config_.chunk_length && config_.action_bytes &&
            storage_.size() >= chunk_bytes_ * config_.ring_slots;
 }
 
-unsigned char* RtcActionChunkMode::slot_ptr(int slot) {
+unsigned char* ActionChunkMode::slot_ptr(int slot) {
     return storage_.data() + static_cast<uint64_t>(slot) * chunk_bytes_;
 }
 
-int RtcActionChunkMode::copy_output_to_pending_slot() {
+int ActionChunkMode::copy_output_to_pending_slot() {
     if (!chunking_enabled() || pending_slot_ < 0) return CAP_OK;
     cap_model_runtime* model = runner_->model();
     if (!model) return CAP_ERR_ARG;

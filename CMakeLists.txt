@@ -28,8 +28,9 @@ add_library(nexus_l2 STATIC
   nexus/schedulers/stage_dag_c.cpp
   nexus/embedded/session.cpp
   nexus/state/graph_store.cpp
-  nexus/modes/rtc_action_chunk/rtc_action_chunk.cpp
-  nexus/modes/rtc_action_chunk/rtc_action_chunk_c.cpp)
+  nexus/modes/action_chunk/action_chunk.cpp
+  nexus/modes/action_chunk/action_chunk_c.cpp
+  nexus/modes/action_chunk/rtc_action_chunk_compat.cpp)
 target_include_directories(nexus_l2
   PUBLIC .
   PRIVATE core/include host/include)
@@ -112,8 +113,9 @@ if(CAPSULE_BUILD_FLASHRT_BACKEND)
     nexus/schedulers/stage_dag_c.cpp
     nexus/embedded/session.cpp
     nexus/state/graph_store.cpp
-    nexus/modes/rtc_action_chunk/rtc_action_chunk.cpp
-    nexus/modes/rtc_action_chunk/rtc_action_chunk_c.cpp
+    nexus/modes/action_chunk/action_chunk.cpp
+    nexus/modes/action_chunk/action_chunk_c.cpp
+    nexus/modes/action_chunk/rtc_action_chunk_compat.cpp
     backends/flashrt/flashrt_backend.cpp
     backends/flashrt/flashrt_runtime_adapter.cpp
     backends/flashrt/flashrt_model_adapter.cpp)
