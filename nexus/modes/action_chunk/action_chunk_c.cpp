@@ -60,6 +60,10 @@ nexus::ActionChunkConfig convert(const nexus_action_chunk_config* in) {
         out.switch_offset = in->switch_offset;
         out.lookahead_steps = in->lookahead_steps;
         out.state_input_port = in->state_input_port;
+        out.prefix_len = in->prefix_len;
+        out.prev_chunk_port = in->prev_chunk_port;
+        out.raw_out_port = in->raw_out_port;
+        out.raw_action_bytes = in->raw_action_bytes;
     }
     return out;
 }
@@ -169,6 +173,13 @@ extern "C" int nexus_action_chunk_projected_state(
         nexus_action_chunk* h, float* out, uint32_t capacity_dims,
         uint32_t* written_dims) {
     return h ? h->mode.projected_state(out, capacity_dims, written_dims)
+             : CAP_ERR_ARG;
+}
+
+extern "C" int nexus_action_chunk_prev_chunk_staged(
+        nexus_action_chunk* h, void* out, uint64_t capacity,
+        uint64_t* written) {
+    return h ? h->mode.prev_chunk_staged(out, capacity, written)
              : CAP_ERR_ARG;
 }
 

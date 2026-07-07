@@ -113,6 +113,27 @@ int StageDagRunner::query(uint64_t stage_index) {
     return rc;
 }
 
+int StageDagRunner::read_output(uint32_t port_index, void* dst,
+                                uint64_t capacity, uint64_t* written) {
+    if (written) *written = 0;
+    if (!ok_ || !dst || !model_ || port_index >= model_->n_ports)
+        return CAP_ERR_ARG;
+    const cap_model_port& port = model_->ports[port_index];
+    if (port.direction != 1) return CAP_ERR_ARG;
+    if (port.update == 0 && port.buffer) {
+        if (!port.bytes || capacity < port.bytes) return CAP_ERR_ARG;
+        int rc = backend_->buffer_download(backend_->self, port.buffer,
+                                           port.offset, dst, port.bytes, 0);
+        if (rc != CAP_OK) return rc;
+        rc = backend_->sync(backend_->self, 0);
+        if (rc != CAP_OK) return rc;
+        if (written) *written = port.bytes;
+        return CAP_OK;
+    }
+    return cap_model_get_output(model_, port_index, dst, capacity,
+                                written, -1);
+}
+
 int StageDagRunner::sync(uint64_t stage_index) {
     if (!ok_ || stage_index >= model_->n_stages) return CAP_ERR_ARG;
     int rc = backend_->sync(backend_->self, model_->stages[stage_index].stream);

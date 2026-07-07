@@ -42,6 +42,12 @@ public:
                 const uint32_t* phases, uint64_t n_periods);
     int query(uint64_t stage_index);  /* 0 ready, >0 pending, <0 error */
     int sync(uint64_t stage_index);
+    /* Read an OUT port. SWAP ports are served from their declared device
+     * window (the swap fast lane's read side: download + sync); STAGED
+     * ports go through the producer's get_output verb. Call only after
+     * the producing stage completed (query == 0). */
+    int read_output(uint32_t port_index, void* dst, uint64_t capacity,
+                    uint64_t* written);
     bool in_flight(uint64_t stage_index) const;
     bool has_event(uint64_t stage_index) const;
 

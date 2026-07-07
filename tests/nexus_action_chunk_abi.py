@@ -25,6 +25,7 @@ COMPAT_PREFIX = "nexus_rtc_action_chunk"
 
 NEXUS_AC_PREPARE_NONE = 0
 NEXUS_AC_PREPARE_PROJECTED_STATE = 1
+NEXUS_AC_PREPARE_PREV_CHUNK_PREFIX = 2
 NEXUS_AC_CONSUME_PLAIN = 0
 NEXUS_AC_CONSUME_SWITCH = 1
 NEXUS_AC_CONSUME_TEMPORAL_FUSION = 2
@@ -67,6 +68,10 @@ class NexusActionChunkConfig(ctypes.Structure):
         ("switch_offset", ctypes.c_int32),
         ("lookahead_steps", ctypes.c_uint32),
         ("state_input_port", ctypes.c_uint32),
+        ("prefix_len", ctypes.c_uint32),
+        ("prev_chunk_port", ctypes.c_uint32),
+        ("raw_out_port", ctypes.c_uint32),
+        ("raw_action_bytes", ctypes.c_uint32),
     ]
 
 
@@ -128,6 +133,7 @@ class ActionChunkAbi:
                                           _U32]),
         "projected_state": (_I, [_P, ctypes.POINTER(ctypes.c_float), _U32,
                                  ctypes.POINTER(_U32)]),
+        "prev_chunk_staged": (_I, [_P, _P, _U64, ctypes.POINTER(_U64)]),
         "in_flight": (_I, [_P]),
         "has_active": (_I, [_P]),
         "remaining": (_U32, [_P]),

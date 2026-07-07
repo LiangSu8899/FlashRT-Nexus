@@ -739,6 +739,120 @@ static void test_projected_seating_late_and_wait() {
           "promotion after overshoot clips into the projected chunk");
 }
 
+/* ---- prepare = prev_chunk_prefix ------------------------------------------ */
+
+struct DualProbe {
+    const float* actions = nullptr;       /* port 0: 3 x f32 robot actions */
+};
+
+static int dual_get_output(void* p, uint32_t port, void* out,
+                           uint64_t capacity, uint64_t* written, int) {
+    if (port != 0) return CAP_ERR_ARG;    /* the raw port is a SWAP window */
+    auto* probe = static_cast<DualProbe*>(p);
+    if (written) *written = 12;
+    if (capacity < 12) return CAP_ERR_ARG;
+    std::memcpy(out, probe->actions, 12);
+    return CAP_OK;
+}
+
+static void test_prepare_prev_chunk_prefix() {
+    Fixture fx(true);
+    DualProbe probe;
+    int64_t raw_shape[2] = {3, 1};
+    unsigned char raw_window[6] = {};     /* the SWAP window the graph fills */
+    cap_buffer raw_buf = fx.be.buffer_wrap(fx.be.self, "actions_raw",
+                                           raw_window, sizeof(raw_window), 0);
+    cap_model_port ports2[2]{};
+    ports2[0] = fx.ports[0];
+    ports2[1].name = "actions_raw";
+    ports2[1].direction = 1;
+    ports2[1].update = 0;                 /* SWAP: window read, no verb */
+    ports2[1].shape = raw_shape;
+    ports2[1].rank = 2;
+    ports2[1].buffer = raw_buf;
+    ports2[1].bytes = sizeof(raw_window);
+    fx.model.ports = ports2;
+    fx.model.n_ports = 2;
+    fx.model.self = &probe;
+    fx.model.get_output = dual_get_output;
+    nexus::StageDagRunner runner(fx.ctx, &fx.model);
+    prime_context(runner);
+
+    nexus::ActionChunkConfig cfg = chunk_config();
+    cfg.prepare_policy = nexus::kActionChunkPreparePrevChunkPrefix;
+    cfg.consume_policy = nexus::kActionChunkConsumeSwitch;
+    cfg.execute_horizon = 0;
+    cfg.prefix_len = 2;
+    cfg.raw_out_port = 2;        /* +1 encoded: port index 1 */
+    cfg.raw_action_bytes = 2;
+    CHECK(nexus::ActionChunkMode::validate(cfg) == CAP_OK,
+          "prev_chunk_prefix with latency switch is accepted");
+    nexus::ActionChunkConfig bad = cfg;
+    bad.consume_policy = nexus::kActionChunkConsumePlain;
+    CHECK(nexus::ActionChunkMode::validate(bad) == CAP_ERR_ARG,
+          "prev_chunk_prefix requires the latency switch consume");
+    bad = cfg;
+    bad.prefix_len = 4;
+    CHECK(nexus::ActionChunkMode::validate(bad) == CAP_ERR_ARG,
+          "prefix_len beyond the chunk length is rejected");
+    bad = cfg;
+    bad.raw_out_port = 0;
+    CHECK(nexus::ActionChunkMode::validate(bad) == CAP_ERR_ARG,
+          "the raw output port is required");
+    bad = cfg;
+    bad.prev_chunk_port = 1;
+    CHECK(nexus::ActionChunkMode::validate(bad) == CAP_ERR_ARG,
+          "SWAP prev-chunk transport is not implemented yet and is rejected");
+
+    nexus::ActionChunkMode mode(&runner, cfg);
+    const float robot[3] = {1.0f, 2.0f, 3.0f};
+    const unsigned char raw_a[6] = {0xA1, 0xA2, 0xB1, 0xB2, 0xC1, 0xC2};
+    const unsigned char raw_b[6] = {0x11, 0x12, 0x21, 0x22, 0x31, 0x32};
+    unsigned char staged[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+    const unsigned char zeros[6] = {0, 0, 0, 0, 0, 0};
+    uint64_t staged_bytes = 0;
+    float out = 0.0f;
+    uint64_t written = 0;
+
+    probe.actions = robot;
+    std::memcpy(raw_window, raw_a, sizeof(raw_window));
+    g_event_pending = 0;
+    CHECK(mode.begin_request() == CAP_OK &&
+              mode.prev_chunk_staged(staged, sizeof(staged),
+                                     &staged_bytes) == CAP_OK &&
+              staged_bytes == 6 && std::memcmp(staged, zeros, 6) == 0,
+          "cold start stages a zero prefix");
+    CHECK(mode.commit_request() == CAP_OK &&
+              mode.poll() == nexus::ActionChunkState::kReady &&
+              mode.active_index() == 0,
+          "first chunk seats at the latency index and retains its raw twin");
+    CHECK(mode.next_action(&out, sizeof(out), &written) ==
+                  nexus::ActionChunkState::kReady && out == 1.0f,
+          "prefix fixture consumes one action");
+
+    const unsigned char expected_j1[6] = {0xB1, 0xB2, 0xC1, 0xC2, 0xC1, 0xC2};
+    std::memcpy(raw_window, raw_b, sizeof(raw_window));
+    CHECK(mode.begin_request() == CAP_OK &&
+              mode.prev_chunk_staged(staged, sizeof(staged),
+                                     &staged_bytes) == CAP_OK &&
+              std::memcmp(staged, expected_j1, 6) == 0,
+          "staging re-indexes the raw chunk by the consumption position");
+    CHECK(mode.commit_request() == CAP_OK && mode.advance_step() == CAP_OK &&
+              mode.poll() == nexus::ActionChunkState::kReady &&
+              mode.active_index() == 1,
+          "the prefixed chunk seats at the elapsed-step index");
+
+    /* Exhaust the chunk: staging then repeats the last raw row. */
+    while (mode.has_active_chunk())
+        (void)mode.next_action(&out, sizeof(out), &written);
+    const unsigned char expected_end[6] = {0x31, 0x32, 0x31, 0x32, 0x31, 0x32};
+    CHECK(mode.begin_request() == CAP_OK &&
+              mode.prev_chunk_staged(staged, sizeof(staged),
+                                     &staged_bytes) == CAP_OK &&
+              std::memcmp(staged, expected_end, 6) == 0,
+          "staging after exhaustion repeats the last raw action");
+}
+
 /* ---- determinism / replay ------------------------------------------------ */
 
 struct ScriptResult {
@@ -848,6 +962,7 @@ int main() {
     test_consume_temporal_fusion();
     test_prepare_projected_state();
     test_projected_seating_late_and_wait();
+    test_prepare_prev_chunk_prefix();
     test_determinism_replay();
     test_c_abi_new_verbs();
     std::printf(g_fail ? "\n== ACTION CHUNK TEST FAILED ==\n"
