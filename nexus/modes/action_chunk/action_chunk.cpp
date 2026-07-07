@@ -79,9 +79,15 @@ int ActionChunkMode::validate(const ActionChunkConfig& config) {
     }
     if (config.prepare_policy == kActionChunkPrepareProjectedState) {
         /* Compatibility matrix: the internal d-vs-k seating IS the latency
-         * compensation; pairing with switch would compensate twice, and the
-         * fusion pairing is unvalidated. Plain only. */
-        if (config.consume_policy != kActionChunkConsumePlain)
+         * compensation; pairing with switch would compensate twice. The
+         * fusion pairing has no reference implementation and is gated as
+         * experimental: projection removes the bulk of the seam, fusion
+         * smooths the residual; fusion of an early-landed chunk is deferred
+         * to its start step so the waiting window keeps its fused chunk. */
+        const bool fused_pair = config.experimental &&
+            config.consume_policy == kActionChunkConsumeTemporalFusion &&
+            config.switch_mode == kActionChunkSwitchLatency;
+        if (config.consume_policy != kActionChunkConsumePlain && !fused_pair)
             return CAP_ERR_ARG;
         if (!chunked || config.state_dim == 0) return CAP_ERR_ARG;
         if (config.scalar_dtype != kActionChunkDtypeF32 ||
@@ -278,7 +284,21 @@ ActionChunkState ActionChunkMode::poll() {
             if (active_slot_ >= 0) ++chunk_switches_;
             int seat_rc = CAP_OK;
             if (config_.prepare_policy == kActionChunkPrepareProjectedState) {
-                seat_rc = seat_projected();
+                if (config_.consume_policy ==
+                    kActionChunkConsumeTemporalFusion) {
+                    /* Composed seating: at or past the start step, fuse and
+                     * seat now (latency index = d - k, clipped); earlier,
+                     * park as waiting WITHOUT fusing -- the previous fused
+                     * chunk keeps serving until the start step. */
+                    if (action_step_ >= slot_start_step_[pending_slot_]) {
+                        seat_rc = seat_fusion();
+                    } else {
+                        waiting_slot_ = pending_slot_;
+                        pending_slot_ = -1;
+                    }
+                } else {
+                    seat_rc = seat_projected();
+                }
             } else switch (config_.consume_policy) {
                 case kActionChunkConsumeSwitch:
                     seat_rc = seat_switch();
@@ -644,7 +664,11 @@ int ActionChunkMode::prepare_projected() {
     }
     uint32_t count = 0;
     std::fill(state_cum_.begin(), state_cum_.end(), 0.0);
-    if (active_slot_ >= 0 && !consume_fused_) {
+    if (active_slot_ >= 0) {
+        /* Integrate what the robot will actually execute: the fused values
+         * under a fusion consume, the raw chunk otherwise. */
+        const unsigned char* source =
+            consume_fused_ ? fused_.data() : slot_ptr(active_slot_);
         const uint32_t begin = active_index_;
         const uint32_t end = begin + config_.lookahead_steps >
                                      config_.chunk_length
@@ -652,8 +676,7 @@ int ActionChunkMode::prepare_projected() {
                                  : begin + config_.lookahead_steps;
         for (uint32_t i = begin; i < end; ++i) {
             const float* row = reinterpret_cast<const float*>(
-                slot_ptr(active_slot_) +
-                static_cast<uint64_t>(i) * config_.action_bytes);
+                source + static_cast<uint64_t>(i) * config_.action_bytes);
             for (uint32_t k = 0; k < state_dim; ++k) {
                 const uint32_t col = state_action_indices_.empty()
                                          ? k : state_action_indices_[k];
@@ -735,6 +758,14 @@ void ActionChunkMode::promote_waiting() {
     if (waiting_slot_ < 0 ||
         action_step_ < slot_start_step_[waiting_slot_])
         return;
+    if (config_.consume_policy == kActionChunkConsumeTemporalFusion) {
+        /* Deferred fusion: the chunk becomes consumable now; prune at the
+         * current step, fuse, and seat (latency index, cannot fail). */
+        pending_slot_ = waiting_slot_;
+        waiting_slot_ = -1;
+        (void)seat_fusion();
+        return;
+    }
     uint64_t idx = action_step_ - slot_start_step_[waiting_slot_];
     const uint64_t last = config_.chunk_length - 1;
     if (idx > last) idx = last;

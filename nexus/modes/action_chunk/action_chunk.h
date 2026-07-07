@@ -84,6 +84,9 @@ struct ActionChunkConfig {
     uint8_t scalar_dtype = kActionChunkDtypeRaw;
     uint8_t action_representation = kActionChunkReprAbsolute;
     uint8_t distance_metric = 0;        /* 0 = l1, 1 = l2 */
+    /* Experimental pairings (no reference implementation exists yet) are
+     * rejected unless explicitly unlocked; see the compatibility matrix. */
+    uint8_t experimental = 0;
     uint32_t state_dim = 0;             /* 0 = no state feed */
     uint32_t candidates = 0;            /* 0 or 1 = single fire (reserved) */
     /* temporal_fusion: weight(j) = exp(-fusion_decay * j), precomputed at

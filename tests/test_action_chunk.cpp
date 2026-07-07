@@ -853,6 +853,98 @@ static void test_prepare_prev_chunk_prefix() {
           "staging after exhaustion repeats the last raw action");
 }
 
+/* ---- experimental: projected_state + temporal_fusion ---------------------- */
+
+static void test_composed_projected_fusion() {
+    Fixture fx(true);
+    FloatProbe probe;
+    fx.model.self = &probe;
+    fx.model.get_output = float_get_output;
+    nexus::StageDagRunner runner(fx.ctx, &fx.model);
+    prime_context(runner);
+
+    nexus::ActionChunkConfig cfg = chunk_config();
+    cfg.prepare_policy = nexus::kActionChunkPrepareProjectedState;
+    cfg.consume_policy = nexus::kActionChunkConsumeTemporalFusion;
+    cfg.scalar_dtype = nexus::kActionChunkDtypeF32;
+    cfg.action_representation = nexus::kActionChunkReprDeltaCumulative;
+    cfg.state_dim = 1;
+    cfg.lookahead_steps = 1;
+    cfg.ring_slots = 4;
+    cfg.fusion_decay = 0.0;
+    cfg.fusion_max_chunks = 3;
+    cfg.execute_horizon = 0;
+    CHECK(nexus::ActionChunkMode::validate(cfg) == CAP_ERR_ARG,
+          "the composed pairing is rejected without the experimental flag");
+    cfg.experimental = 1;
+    nexus::ActionChunkConfig bad = cfg;
+    bad.switch_mode = nexus::kActionChunkSwitchState;
+    CHECK(nexus::ActionChunkMode::validate(bad) == CAP_ERR_ARG,
+          "the composed pairing allows only the latency switch");
+    CHECK(nexus::ActionChunkMode::validate(cfg) == CAP_OK,
+          "the experimental flag unlocks projected_state + fusion");
+
+    const float measured0[1] = {10.0f};
+    const float measured1[1] = {20.0f};
+    const float deltas_a[3] = {1.0f, 2.0f, 3.0f};
+    const float deltas_b[3] = {10.0f, 20.0f, 30.0f};
+    float proj[1] = {0.0f};
+    uint32_t dims = 0;
+    float out = 0.0f;
+    uint64_t written = 0;
+
+    /* d == k: fuse at ready, seat at index d - k = 0. */
+    nexus::ActionChunkMode mode(&runner, cfg);
+    g_event_pending = 0;
+    probe.data = deltas_a;
+    CHECK(mode.set_state(measured0, 1) == CAP_OK &&
+              mode.request() == CAP_OK &&
+              mode.poll() == nexus::ActionChunkState::kReady &&
+              mode.active_index() == 0,
+          "composed first chunk fuses with itself and seats at 0");
+    CHECK(mode.next_action(&out, sizeof(out), &written) ==
+                  nexus::ActionChunkState::kReady && out == 1.0f,
+          "composed fixture consumes one fused action");
+    CHECK(mode.set_state(measured1, 1) == CAP_OK &&
+              mode.begin_request() == CAP_OK &&
+              mode.projected_state(proj, 1, &dims) == CAP_OK &&
+              proj[0] == 22.0f && mode.projected_count() == 1,
+          "composed projection integrates the fused values");
+    probe.data = deltas_b;
+    CHECK(mode.commit_request() == CAP_OK && mode.advance_step() == CAP_OK &&
+              mode.poll() == nexus::ActionChunkState::kReady &&
+              !mode.seated_waiting() && mode.active_index() == 0,
+          "composed d == k fuses at ready and seats at index 0");
+    const float* fused = reinterpret_cast<const float*>(mode.fused_chunk());
+    CHECK(fused[0] == 6.5f && fused[1] == 20.0f && fused[2] == 30.0f,
+          "the projected anchor drives the fusion window");
+
+    /* d < k: fusion is deferred; the old fused chunk serves the wait. */
+    nexus::ActionChunkMode wait(&runner, cfg);
+    probe.data = deltas_a;
+    CHECK(wait.set_state(measured0, 1) == CAP_OK &&
+              wait.request() == CAP_OK &&
+              wait.poll() == nexus::ActionChunkState::kReady &&
+              wait.next_action(&out, sizeof(out), &written) ==
+                  nexus::ActionChunkState::kReady && out == 1.0f,
+          "composed wait fixture consumes one action");
+    CHECK(wait.set_state(measured1, 1) == CAP_OK &&
+              wait.request() == CAP_OK,
+          "composed wait fixture fires with k = 1");
+    probe.data = deltas_b;
+    CHECK(wait.poll() == nexus::ActionChunkState::kReady &&
+              wait.seated_waiting(),
+          "an early landing parks without fusing");
+    CHECK(wait.next_action(&out, sizeof(out), &written) ==
+                  nexus::ActionChunkState::kReady && out == 2.0f &&
+              wait.seated_waiting(),
+          "the previous fused chunk serves the waiting window intact");
+    CHECK(wait.next_action(&out, sizeof(out), &written) ==
+                  nexus::ActionChunkState::kReady && out == 6.5f &&
+              !wait.seated_waiting(),
+          "deferred fusion runs exactly at the start step");
+}
+
 /* ---- determinism / replay ------------------------------------------------ */
 
 struct ScriptResult {
@@ -963,6 +1055,7 @@ int main() {
     test_prepare_projected_state();
     test_projected_seating_late_and_wait();
     test_prepare_prev_chunk_prefix();
+    test_composed_projected_fusion();
     test_determinism_replay();
     test_c_abi_new_verbs();
     std::printf(g_fail ? "\n== ACTION CHUNK TEST FAILED ==\n"
