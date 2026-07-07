@@ -10,6 +10,57 @@ The mode is model-agnostic: chunk geometry is derived from any ACTION
 output port shape (`(10, 7)` and `(50, 7)` are just two declarations of
 the same contract). Pi0.5 is the first real-model instance.
 
+## One mechanism, two policy slots
+
+The mechanism owns the async lifecycle: the chunk ring, the two-phase
+request (`begin_request` prepares, `commit_request` fires), the
+controller-step grid (`action_step`, advanced only by consumption or
+`advance_step`), two independent deadline clocks (`deadline_steps` on
+the grid; `poll_budget` as a pending-poll liveness watchdog), the state
+feed, and plain-counter telemetry.
+
+Every asynchronous chunking method is a decision on one of two seams,
+selected by config and validated at create — never at tick:
+
+| Slot | Policy | Decision |
+|---|---|---|
+| prepare (before fire) | `none` | nothing — the chunk is conditioned on fire-time inputs as-is |
+| | `projected_state` | integrate the next `lookahead_steps` delta actions into the measured state and feed it to the model; the chunk anchors at `fire_step + k`, index 0 pinned to the projected step (early landings wait; consumption switches exactly at the start step) |
+| | `prev_chunk_prefix` | retain the model-space raw chunk and stage it, re-indexed by the consumption position, for the producer's in-graph prefix freeze (`decode_rtc_prefix`-style hard inpainting) |
+| consume (on ready / per step) | `plain` | seat immediately at index 0 |
+| | `switch` | seat at the latency index `clip(d + switch_offset)` or at the state-distance argmin |
+| | `temporal_fusion` | retain completed chunks on the step grid and fuse the newest chunk's window with `exp(-decay·Δ)` weights (table built at create; f64 accumulation, f32 output; raw chunks stay immutable) |
+
+Pairings follow a compatibility matrix (see `validate()`):
+`projected_state` pairs with `plain` (its d-vs-k seating IS the latency
+compensation); `prev_chunk_prefix` pairs with `switch(latency)`;
+`projected_state + temporal_fusion` is allowed behind the
+`experimental` config flag (fusion of an early-landed chunk defers to
+its start step). Everything else is rejected at create.
+
+## Community-method aliases
+
+| Config | Method lineage |
+|---|---|
+| `none + plain` | naive double-buffered swap |
+| `none + switch(latency)` | latency-corrected async swap |
+| `none + temporal_fusion` | temporal ensembling (ACT lineage) |
+| `projected_state + plain` | projected-state async inference |
+| `prev_chunk_prefix + switch` | real-time chunking, hard-prefix variant |
+| `projected_state + temporal_fusion` | composition (experimental) |
+
+## Transport grading
+
+Policies that write producer inputs use `+1`-encoded transport fields
+(`state_input_port`, `prev_chunk_port`): `0` = **host transport** — the
+mode computes and exposes the value (`projected_state()`,
+`prev_chunk_staged()`) between `begin_request` and `commit_request`,
+and the embedder injects it through its model-specific path. Host
+transport is the gate/transitional lane; the SWAP-port lane (microsecond
+writes, no host round-trip) is the production lane and lands when the
+producer declares the ports. Output-side SWAP ports are already served
+directly from their device window (`StageDagRunner::read_output`).
+
 - C++: `action_chunk.h` (`ActionChunkConfig`, `ActionChunkMode`) —
   config geometry can be derived from the ACTION output port shape via
   `config_from_output_port`.
@@ -19,8 +70,26 @@ the same contract). Pi0.5 is the first real-model instance.
   `nexus_rtc_action_chunk_*` aliases, kept for external consumers until
   the next 0.x breaking window. New code uses `action_chunk_c.h`.
 - Telemetry: completed/emitted counters, fallbacks, late chunks,
-  pending/ready tick histograms.
+  held actions, chunk switches, pending/ready tick histograms, grid and
+  seating stamps.
 
-Runnable assembly: [`examples/pi05_rtc`](../../../examples/pi05_rtc/)
+## Verification
+
+- `tests/test_action_chunk.cpp` — mechanism and policy properties on
+  the stub backend (versioning, the two clocks, hold-last, seating,
+  waiting, determinism replay).
+- `tests/test_action_chunk_oracle.cpp` — golden-vector replay against
+  the reference semantics (fusion bit-exact in f32, projection to one
+  ulp); skips unless `NEXUS_AC_VECTORS` / `NEXUS_AC_PROJ_VECTORS` are
+  set.
+- Real-model gates, all numerically anchored: `gate_pi05_action_chunk`
+  (plain, memcmp vs `cap_model_tick`; the regression anchor),
+  `..._fusion` (raw vs baseline + fused vs reference),
+  `..._projected` (projection vs reference + chunk vs baseline under
+  the injected state), `..._prefix` (staged bytes vs independent
+  recompute + chunk vs baseline), `..._composed` (all four seams).
+
+Runnable assembly:
+[`examples/pi05_action_chunk`](../../../examples/pi05_action_chunk/)
 (Pi0.5 context/action split, numerically gated against the
 `cap_model_tick` baseline in `tests/gate_pi05_action_chunk.py`).

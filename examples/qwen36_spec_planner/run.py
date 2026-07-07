@@ -228,7 +228,7 @@ def main() -> int:
     ap.add_argument("--planner-only", action="store_true")
     ap.add_argument("--with-actor", action="store_true",
                     help="drive the Pi0.5 RTC actor in the same "
-                         "process (see examples/pi05_rtc)")
+                         "process (see examples/pi05_action_chunk)")
     ap.add_argument("--tick-hz", type=float, default=5.0)
     ap.add_argument("--cycle-budget-ms", type=float, default=150.0,
                     help="upper bound on the planner cycle budget; the "
@@ -243,7 +243,7 @@ def main() -> int:
     if args.with_actor:
         raise SystemExit(
             "[qwen36_spec_planner] --with-actor wiring follows the "
-            "pi05_rtc example (RTC C ABI in the tick slot); run "
+            "pi05_action_chunk example (action-chunk C ABI in the tick slot); run "
             "--planner-only first to validate the planner half on "
             "this machine")
     return run_planner_only(args)
