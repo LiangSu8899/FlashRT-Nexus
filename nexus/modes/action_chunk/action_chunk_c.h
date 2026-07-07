@@ -29,7 +29,8 @@ enum nexus_action_chunk_state {
 };
 
 enum nexus_ac_prepare_policy {
-    NEXUS_AC_PREPARE_NONE = 0
+    NEXUS_AC_PREPARE_NONE = 0,
+    NEXUS_AC_PREPARE_PROJECTED_STATE = 1
 };
 
 enum nexus_ac_consume_policy {
@@ -92,6 +93,8 @@ typedef struct nexus_action_chunk_config {
     double   fusion_decay;      /* f64: the reference semantics are f64     */
     uint32_t fusion_max_chunks; /* 0 = default 3                            */
     int32_t  switch_offset;     /* switch(latency): idx = clip(d + offset)  */
+    uint32_t lookahead_steps;   /* projected_state: delta steps integrated  */
+    uint32_t state_input_port;  /* +1 encoded: 0 = host transport           */
 } nexus_action_chunk_config;
 
 typedef struct nexus_action_chunk_s nexus_action_chunk;
@@ -136,6 +139,11 @@ int  nexus_action_chunk_set_state(nexus_action_chunk*,
 int  nexus_action_chunk_set_state_action_indices(nexus_action_chunk*,
                                                  const uint32_t* indices,
                                                  uint32_t n);
+/* projected_state prepare: read the value computed by the last
+ * begin_request for host-transport injection. */
+int  nexus_action_chunk_projected_state(nexus_action_chunk*,
+                                        float* out, uint32_t capacity_dims,
+                                        uint32_t* written_dims);
 
 int      nexus_action_chunk_in_flight(nexus_action_chunk*);
 int      nexus_action_chunk_has_active(nexus_action_chunk*);
@@ -154,6 +162,9 @@ uint64_t nexus_action_chunk_held_actions(nexus_action_chunk*);
 uint64_t nexus_action_chunk_prepared_requests(nexus_action_chunk*);
 uint64_t nexus_action_chunk_state_updates(nexus_action_chunk*);
 uint32_t nexus_action_chunk_last_d_steps(nexus_action_chunk*);
+int      nexus_action_chunk_seated_waiting(nexus_action_chunk*);
+uint64_t nexus_action_chunk_active_start_step(nexus_action_chunk*);
+uint32_t nexus_action_chunk_projected_count(nexus_action_chunk*);
 int      nexus_action_chunk_last_error(nexus_action_chunk*);
 
 #ifdef __cplusplus
