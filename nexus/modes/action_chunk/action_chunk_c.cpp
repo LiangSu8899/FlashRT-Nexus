@@ -53,6 +53,7 @@ nexus::ActionChunkConfig convert(const nexus_action_chunk_config* in) {
         out.scalar_dtype = in->scalar_dtype;
         out.action_representation = in->action_representation;
         out.distance_metric = in->distance_metric;
+        out.experimental = in->experimental;
         out.state_dim = in->state_dim;
         out.candidates = in->candidates;
         out.fusion_decay = in->fusion_decay;

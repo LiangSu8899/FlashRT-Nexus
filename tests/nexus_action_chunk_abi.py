@@ -59,7 +59,7 @@ class NexusActionChunkConfig(ctypes.Structure):
         ("scalar_dtype", ctypes.c_uint8),
         ("action_representation", ctypes.c_uint8),
         ("distance_metric", ctypes.c_uint8),
-        ("reserved3", ctypes.c_uint8),
+        ("experimental", ctypes.c_uint8),
         ("state_dim", ctypes.c_uint32),
         ("candidates", ctypes.c_uint32),
         ("reserved4", ctypes.c_uint32),

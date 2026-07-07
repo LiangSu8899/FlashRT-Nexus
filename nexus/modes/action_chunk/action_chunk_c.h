@@ -87,7 +87,7 @@ typedef struct nexus_action_chunk_config {
     uint8_t  scalar_dtype;      /* nexus_ac_dtype                           */
     uint8_t  action_representation;  /* nexus_ac_action_repr                */
     uint8_t  distance_metric;   /* 0 = l1, 1 = l2                           */
-    uint8_t  reserved3;
+    uint8_t  experimental;      /* 1 unlocks experimental policy pairings   */
     uint32_t state_dim;         /* 0 = no state feed                        */
     uint32_t candidates;        /* 0 or 1 = single fire (reserved)          */
     uint32_t reserved4;
