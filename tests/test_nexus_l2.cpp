@@ -287,7 +287,7 @@ int main() {
           "async runner can fire the context stage");
     nexus::ActionChunkConfig deadline_cfg{};
     deadline_cfg.action_stage = 1;
-    deadline_cfg.deadline_ticks = 1;
+    deadline_cfg.poll_budget = 1;
     nexus::ActionChunkMode deadline_mode(&async_runner, deadline_cfg);
     CHECK(deadline_mode.request() == CAP_OK &&
               deadline_mode.poll() == nexus::ActionChunkState::kPending &&
