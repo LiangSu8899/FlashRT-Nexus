@@ -42,7 +42,8 @@ int ActionChunkMode::config_from_output_port(
 }
 
 int ActionChunkMode::validate(const ActionChunkConfig& config) {
-    if (config.prepare_policy != kActionChunkPrepareNone) return CAP_ERR_ARG;
+    if (config.prepare_policy > kActionChunkPrepareProjectedState)
+        return CAP_ERR_ARG;
     if (config.consume_policy > kActionChunkConsumeTemporalFusion)
         return CAP_ERR_ARG;
     if (config.switch_mode > kActionChunkSwitchState) return CAP_ERR_ARG;
@@ -75,6 +76,22 @@ int ActionChunkMode::validate(const ActionChunkConfig& config) {
         if (!(config.fusion_decay >= 0.0) ||
             config.fusion_decay > 1e6)
             return CAP_ERR_ARG;
+    }
+    if (config.prepare_policy == kActionChunkPrepareProjectedState) {
+        /* Compatibility matrix: the internal d-vs-k seating IS the latency
+         * compensation; pairing with switch would compensate twice, and the
+         * fusion pairing is unvalidated. Plain only. */
+        if (config.consume_policy != kActionChunkConsumePlain)
+            return CAP_ERR_ARG;
+        if (!chunked || config.state_dim == 0) return CAP_ERR_ARG;
+        if (config.scalar_dtype != kActionChunkDtypeF32 ||
+            config.action_bytes % 4)
+            return CAP_ERR_ARG;
+        if (config.action_representation != kActionChunkReprDeltaCumulative)
+            return CAP_ERR_ARG;
+        /* +1 encoded; only host transport (0) is implemented. The SWAP lane
+         * lands with the first producer that declares a numeric state port. */
+        if (config.state_input_port != 0) return CAP_ERR_ARG;
     }
     return CAP_OK;
 }
@@ -109,6 +126,8 @@ ActionChunkMode::ActionChunkMode(
         state_latest_.resize(config_.state_dim, 0.0f);
         state_fire_.resize(config_.state_dim, 0.0f);
         state_cum_.resize(config_.state_dim, 0.0);
+        if (config_.prepare_policy == kActionChunkPrepareProjectedState)
+            projected_.resize(config_.state_dim, 0.0f);
     }
 }
 
@@ -122,11 +141,15 @@ ActionChunkMode::ActionChunkMode(StageDagRunner* runner,
 
 int ActionChunkMode::begin_request() {
     if (!runner_ || !runner_->ok()) return CAP_ERR_ARG;
-    if (in_flight_) return CAP_ERR_ARG;
+    if (in_flight_ || waiting_slot_ >= 0) return CAP_ERR_ARG;
     if (begun_) return CAP_OK;
     if (config_.state_dim && has_state_)
         std::copy(state_latest_.begin(), state_latest_.end(),
                   state_fire_.begin());
+    if (config_.prepare_policy == kActionChunkPrepareProjectedState) {
+        int rc = prepare_projected();
+        if (rc != CAP_OK) return rc;
+    }
     ++prepared_requests_;
     begun_ = true;
     return CAP_OK;
@@ -170,6 +193,9 @@ int ActionChunkMode::commit_request() {
     in_flight_ = true;
     requested_once_ = true;
     fire_step_ = action_step_;
+    pending_lookahead_ =
+        config_.prepare_policy == kActionChunkPrepareProjectedState
+            ? projected_count_ : 0;
     if (pending_slot_ >= 0) slot_fire_step_[pending_slot_] = action_step_;
     pending_ticks_ = 0;
     deadline_reported_ = false;
@@ -201,11 +227,15 @@ ActionChunkState ActionChunkMode::poll() {
                 return ActionChunkState::kError;
             }
             slot_ready_step_[pending_slot_] = action_step_;
-            /* Every consume policy anchors the chunk at its fire step. */
-            slot_start_step_[pending_slot_] = slot_fire_step_[pending_slot_];
+            /* Chunks anchor at their fire step; projected_state anchors at
+             * fire_step + k (index 0 is pinned to the projected step). */
+            slot_start_step_[pending_slot_] =
+                slot_fire_step_[pending_slot_] + pending_lookahead_;
             if (active_slot_ >= 0) ++chunk_switches_;
             int seat_rc = CAP_OK;
-            switch (config_.consume_policy) {
+            if (config_.prepare_policy == kActionChunkPrepareProjectedState) {
+                seat_rc = seat_projected();
+            } else switch (config_.consume_policy) {
                 case kActionChunkConsumeSwitch:
                     seat_rc = seat_switch();
                     break;
@@ -255,7 +285,28 @@ ActionChunkState ActionChunkMode::next_action(void* out, uint64_t capacity,
                                               uint64_t* written) {
     if (written) *written = config_.action_bytes;
     if (!chunking_enabled() || !out) return ActionChunkState::kError;
+    promote_waiting();
     if (active_slot_ < 0) {
+        if (waiting_slot_ >= 0) {
+            /* A seated chunk waits for its start step and nothing else is
+             * consumable: each gap step is served by the miss policy. The
+             * gap is bounded by k - d. Never switch early: index 0 is
+             * pinned to a future controller step by construction. */
+            if (config_.miss_policy == kActionChunkMissHoldLast &&
+                has_held_) {
+                if (capacity < config_.action_bytes) {
+                    last_error_ = CAP_ERR_ARG;
+                    return ActionChunkState::kError;
+                }
+                std::memcpy(out, held_.data(), config_.action_bytes);
+                ++action_step_;
+                ++emitted_actions_;
+                ++held_actions_;
+                promote_waiting();
+                return ActionChunkState::kFallback;
+            }
+            return ActionChunkState::kFallback;
+        }
         if (!in_flight_) {
             int rc = request();
             if (rc != CAP_OK) {
@@ -298,7 +349,7 @@ ActionChunkState ActionChunkMode::next_action(void* out, uint64_t capacity,
         active_slot_ = -1;
         active_index_ = 0;
     }
-    if (active_slot_ >= 0 && !in_flight_ &&
+    if (active_slot_ >= 0 && !in_flight_ && waiting_slot_ < 0 &&
         remaining_actions() <= config_.execute_horizon) {
         (void)request();  /* prefetch best-effort; explicit poll reports errs */
     }
@@ -355,6 +406,7 @@ void ActionChunkMode::reset() {
     begun_ = false;
     has_held_ = false;
     consume_fused_ = false;
+    waiting_slot_ = -1;
     retained_.clear();
     std::fill(slot_valid_.begin(), slot_valid_.end(), 0);
     pending_ticks_ = 0;
@@ -527,6 +579,91 @@ int ActionChunkMode::seat_fusion() {
     active_index_ = index;
     consume_fused_ = true;
     return CAP_OK;
+}
+
+/* Integrate the next k delta actions of the executing chunk into the
+ * measured state (sequential f64 accumulation; the reference sums with
+ * numpy's pairwise reduction, so cross-implementation equality of the f32
+ * result is graded to <= 1 ulp). k clips to the chunk remainder; with no
+ * active chunk the projection is the measured state itself (k = 0). */
+int ActionChunkMode::prepare_projected() {
+    if (!has_state_) return CAP_ERR_ARG;
+    const uint32_t action_dim = config_.action_bytes / 4;
+    const uint32_t state_dim = config_.state_dim;
+    if (state_action_indices_.empty()) {
+        if (state_dim > action_dim) return CAP_ERR_ARG;
+    } else {
+        if (state_action_indices_.size() != state_dim) return CAP_ERR_ARG;
+        for (uint32_t idx : state_action_indices_)
+            if (idx >= action_dim) return CAP_ERR_ARG;
+    }
+    uint32_t count = 0;
+    std::fill(state_cum_.begin(), state_cum_.end(), 0.0);
+    if (active_slot_ >= 0 && !consume_fused_) {
+        const uint32_t begin = active_index_;
+        const uint32_t end = begin + config_.lookahead_steps >
+                                     config_.chunk_length
+                                 ? config_.chunk_length
+                                 : begin + config_.lookahead_steps;
+        for (uint32_t i = begin; i < end; ++i) {
+            const float* row = reinterpret_cast<const float*>(
+                slot_ptr(active_slot_) +
+                static_cast<uint64_t>(i) * config_.action_bytes);
+            for (uint32_t k = 0; k < state_dim; ++k) {
+                const uint32_t col = state_action_indices_.empty()
+                                         ? k : state_action_indices_[k];
+                state_cum_[k] += static_cast<double>(row[col]);
+            }
+        }
+        count = end - begin;
+    }
+    for (uint32_t k = 0; k < state_dim; ++k)
+        projected_[k] = static_cast<float>(
+            static_cast<double>(state_latest_[k]) + state_cum_[k]);
+    projected_count_ = count;
+    return CAP_OK;
+}
+
+int ActionChunkMode::projected_state(float* out, uint32_t capacity_dims,
+                                     uint32_t* written_dims) const {
+    if (written_dims) *written_dims = config_.state_dim;
+    if (!out || projected_.empty() || capacity_dims < config_.state_dim)
+        return CAP_ERR_ARG;
+    std::copy(projected_.begin(), projected_.end(), out);
+    return CAP_OK;
+}
+
+/* projected_state seating: index 0 is pinned to fire_step + k. Landing at
+ * or past the start step seats immediately, skipping the stale prefix;
+ * landing early parks the chunk as waiting -- the old chunk keeps serving
+ * and consumption switches exactly at the start step. */
+int ActionChunkMode::seat_projected() {
+    const uint64_t start = slot_start_step_[pending_slot_];
+    if (action_step_ >= start) {
+        uint64_t idx = action_step_ - start;
+        const uint64_t last = config_.chunk_length - 1;
+        if (idx > last) idx = last;
+        active_slot_ = pending_slot_;
+        active_index_ = static_cast<uint32_t>(idx);
+        consume_fused_ = false;
+    } else {
+        waiting_slot_ = pending_slot_;
+    }
+    pending_slot_ = -1;
+    return CAP_OK;
+}
+
+void ActionChunkMode::promote_waiting() {
+    if (waiting_slot_ < 0 ||
+        action_step_ < slot_start_step_[waiting_slot_])
+        return;
+    uint64_t idx = action_step_ - slot_start_step_[waiting_slot_];
+    const uint64_t last = config_.chunk_length - 1;
+    if (idx > last) idx = last;
+    active_slot_ = waiting_slot_;
+    waiting_slot_ = -1;
+    active_index_ = static_cast<uint32_t>(idx);
+    consume_fused_ = false;
 }
 
 int ActionChunkMode::copy_output_to_pending_slot() {

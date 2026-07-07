@@ -572,6 +572,173 @@ static void test_consume_temporal_fusion() {
           "fusion window slides over the retained chunks");
 }
 
+/* ---- prepare = projected_state -------------------------------------------- */
+
+static void test_prepare_projected_state() {
+    Fixture fx(true);
+    FloatProbe probe;
+    fx.model.self = &probe;
+    fx.model.get_output = float_get_output;
+    nexus::StageDagRunner runner(fx.ctx, &fx.model);
+    prime_context(runner);
+
+    nexus::ActionChunkConfig cfg = chunk_config();
+    cfg.prepare_policy = nexus::kActionChunkPrepareProjectedState;
+    cfg.scalar_dtype = nexus::kActionChunkDtypeF32;
+    cfg.action_representation = nexus::kActionChunkReprDeltaCumulative;
+    cfg.state_dim = 1;
+    cfg.lookahead_steps = 2;
+    cfg.execute_horizon = 0;
+    CHECK(nexus::ActionChunkMode::validate(cfg) == CAP_OK,
+          "projected_state with plain consume and delta actions is accepted");
+    nexus::ActionChunkConfig bad = cfg;
+    bad.consume_policy = nexus::kActionChunkConsumeSwitch;
+    CHECK(nexus::ActionChunkMode::validate(bad) == CAP_ERR_ARG,
+          "projected_state with switch consume is double compensation");
+    bad = cfg;
+    bad.action_representation = nexus::kActionChunkReprAbsolute;
+    CHECK(nexus::ActionChunkMode::validate(bad) == CAP_ERR_ARG,
+          "projected_state requires delta actions");
+    bad = cfg;
+    bad.state_input_port = 1;
+    CHECK(nexus::ActionChunkMode::validate(bad) == CAP_ERR_ARG,
+          "SWAP state transport is not implemented yet and is rejected");
+
+    nexus::ActionChunkMode mode(&runner, cfg);
+    CHECK(mode.begin_request() == CAP_ERR_ARG,
+          "projection without a state feed is a defined error");
+
+    const float measured0[1] = {10.0f};
+    const float deltas_a[3] = {1.0f, 2.0f, 3.0f};
+    float proj[1] = {0.0f};
+    uint32_t dims = 0;
+    float out = 0.0f;
+    uint64_t written = 0;
+    g_event_pending = 0;
+    probe.data = deltas_a;
+    CHECK(mode.set_state(measured0, 1) == CAP_OK &&
+              mode.begin_request() == CAP_OK &&
+              mode.projected_state(proj, 1, &dims) == CAP_OK &&
+              dims == 1 && proj[0] == 10.0f && mode.projected_count() == 0,
+          "first projection is the measured state (no chunk, k = 0)");
+    CHECK(mode.commit_request() == CAP_OK &&
+              mode.poll() == nexus::ActionChunkState::kReady &&
+              mode.active_index() == 0,
+          "first chunk seats at index 0 (d == k == 0)");
+    CHECK(mode.next_action(&out, sizeof(out), &written) ==
+                  nexus::ActionChunkState::kReady && out == 1.0f,
+          "first chunk serves from its start step");
+
+    /* Projection from the active chunk: index 1, lookahead 2 -> 2 + 3. */
+    const float measured1[1] = {20.0f};
+    const float deltas_b[3] = {10.0f, 20.0f, 30.0f};
+    probe.data = deltas_b;
+    CHECK(mode.set_state(measured1, 1) == CAP_OK &&
+              mode.begin_request() == CAP_OK &&
+              mode.projected_state(proj, 1, &dims) == CAP_OK &&
+              proj[0] == 25.0f && mode.projected_count() == 2,
+          "projection integrates the next k deltas of the executing chunk");
+    /* d == k: fire at step 1, start = 3, land at step 3. */
+    CHECK(mode.commit_request() == CAP_OK &&
+              mode.advance_step() == CAP_OK && mode.advance_step() == CAP_OK,
+          "the projected steps elapse during inference");
+    CHECK(mode.poll() == nexus::ActionChunkState::kReady &&
+              !mode.seated_waiting() && mode.active_index() == 0 &&
+              mode.active_start_step() == 3,
+          "d == k seats the projected chunk at index 0");
+    CHECK(mode.next_action(&out, sizeof(out), &written) ==
+                  nexus::ActionChunkState::kReady && out == 10.0f,
+          "projected chunk serves from index 0");
+}
+
+static void test_projected_seating_late_and_wait() {
+    Fixture fx(true);
+    FloatProbe probe;
+    fx.model.self = &probe;
+    fx.model.get_output = float_get_output;
+    nexus::StageDagRunner runner(fx.ctx, &fx.model);
+    prime_context(runner);
+
+    nexus::ActionChunkConfig cfg = chunk_config();
+    cfg.prepare_policy = nexus::kActionChunkPrepareProjectedState;
+    cfg.scalar_dtype = nexus::kActionChunkDtypeF32;
+    cfg.action_representation = nexus::kActionChunkReprDeltaCumulative;
+    cfg.state_dim = 1;
+    cfg.lookahead_steps = 2;
+    cfg.execute_horizon = 0;
+
+    const float measured[1] = {0.0f};
+    const float deltas_a[3] = {1.0f, 2.0f, 3.0f};
+    const float deltas_b[3] = {10.0f, 20.0f, 30.0f};
+    float out = 0.0f;
+    uint64_t written = 0;
+
+    /* Late landing: d > k skips the stale prefix. */
+    nexus::ActionChunkMode late(&runner, cfg);
+    g_event_pending = 0;
+    probe.data = deltas_a;
+    (void)late.set_state(measured, 1);
+    CHECK(late.request() == CAP_OK &&
+              late.poll() == nexus::ActionChunkState::kReady &&
+              late.next_action(&out, sizeof(out), &written) ==
+                  nexus::ActionChunkState::kReady,
+          "late fixture serves its first chunk");
+    probe.data = deltas_b;
+    CHECK(late.request() == CAP_OK, "late fixture fires with k = 2");
+    for (int i = 0; i < 4; ++i) (void)late.advance_step();
+    CHECK(late.poll() == nexus::ActionChunkState::kReady &&
+              late.active_index() == 2 && !late.seated_waiting(),
+          "d > k seats at index d - k");
+
+    /* Early landing: d < k waits; consumption switches exactly at the
+     * start step, never earlier. */
+    nexus::ActionChunkMode wait(&runner, cfg);
+    probe.data = deltas_a;
+    (void)wait.set_state(measured, 1);
+    CHECK(wait.request() == CAP_OK &&
+              wait.poll() == nexus::ActionChunkState::kReady &&
+              wait.next_action(&out, sizeof(out), &written) ==
+                  nexus::ActionChunkState::kReady && out == 1.0f,
+          "wait fixture consumes one action of the first chunk");
+    probe.data = deltas_b;
+    CHECK(wait.request() == CAP_OK && wait.advance_step() == CAP_OK,
+          "wait fixture fires with k = 2, one step elapses");
+    CHECK(wait.poll() == nexus::ActionChunkState::kReady &&
+              wait.seated_waiting() && wait.has_active_chunk(),
+          "d < k parks the chunk as waiting; the old chunk keeps serving");
+    CHECK(wait.request() == CAP_ERR_ARG,
+          "no new fire while a seated chunk waits");
+    CHECK(wait.next_action(&out, sizeof(out), &written) ==
+                  nexus::ActionChunkState::kReady && out == 2.0f &&
+              wait.seated_waiting(),
+          "the old chunk serves the steps before the projected start");
+    CHECK(wait.next_action(&out, sizeof(out), &written) ==
+                  nexus::ActionChunkState::kReady && out == 10.0f &&
+              !wait.seated_waiting(),
+          "consumption switches to the projected chunk exactly at its start");
+
+    /* Waiting overshoot: the grid may pass the start step via advance_step;
+     * promotion then clips into the chunk instead of switching early. */
+    nexus::ActionChunkMode over(&runner, cfg);
+    probe.data = deltas_a;
+    (void)over.set_state(measured, 1);
+    CHECK(over.request() == CAP_OK &&
+              over.poll() == nexus::ActionChunkState::kReady &&
+              over.next_action(&out, sizeof(out), &written) ==
+                  nexus::ActionChunkState::kReady,
+          "overshoot fixture consumes one action");
+    probe.data = deltas_b;
+    CHECK(over.request() == CAP_OK &&
+              over.poll() == nexus::ActionChunkState::kReady &&
+              over.seated_waiting(),
+          "overshoot fixture parks a waiting chunk (d = 0 < k)");
+    for (int i = 0; i < 4; ++i) (void)over.advance_step();
+    CHECK(over.next_action(&out, sizeof(out), &written) ==
+                  nexus::ActionChunkState::kReady && out == 30.0f &&
+              !over.seated_waiting(),
+          "promotion after overshoot clips into the projected chunk");
+}
+
 /* ---- determinism / replay ------------------------------------------------ */
 
 struct ScriptResult {
@@ -679,6 +846,8 @@ int main() {
     test_consume_switch_latency();
     test_consume_switch_state();
     test_consume_temporal_fusion();
+    test_prepare_projected_state();
+    test_projected_seating_late_and_wait();
     test_determinism_replay();
     test_c_abi_new_verbs();
     std::printf(g_fail ? "\n== ACTION CHUNK TEST FAILED ==\n"

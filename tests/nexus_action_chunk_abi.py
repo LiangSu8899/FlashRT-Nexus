@@ -23,6 +23,8 @@ DEFAULT_PREFIX = "nexus_action_chunk"
 COMPAT_PREFIX = "nexus_rtc_action_chunk"
 
 
+NEXUS_AC_PREPARE_NONE = 0
+NEXUS_AC_PREPARE_PROJECTED_STATE = 1
 NEXUS_AC_CONSUME_PLAIN = 0
 NEXUS_AC_CONSUME_SWITCH = 1
 NEXUS_AC_CONSUME_TEMPORAL_FUSION = 2
@@ -63,6 +65,8 @@ class NexusActionChunkConfig(ctypes.Structure):
         ("fusion_decay", ctypes.c_double),
         ("fusion_max_chunks", ctypes.c_uint32),
         ("switch_offset", ctypes.c_int32),
+        ("lookahead_steps", ctypes.c_uint32),
+        ("state_input_port", ctypes.c_uint32),
     ]
 
 
@@ -122,6 +126,8 @@ class ActionChunkAbi:
         "set_state": (_I, [_P, ctypes.POINTER(ctypes.c_float), _U32]),
         "set_state_action_indices": (_I, [_P, ctypes.POINTER(ctypes.c_uint32),
                                           _U32]),
+        "projected_state": (_I, [_P, ctypes.POINTER(ctypes.c_float), _U32,
+                                 ctypes.POINTER(_U32)]),
         "in_flight": (_I, [_P]),
         "has_active": (_I, [_P]),
         "remaining": (_U32, [_P]),
@@ -139,6 +145,9 @@ class ActionChunkAbi:
         "prepared_requests": (_U64, [_P]),
         "state_updates": (_U64, [_P]),
         "last_d_steps": (_U32, [_P]),
+        "seated_waiting": (_I, [_P]),
+        "active_start_step": (_U64, [_P]),
+        "projected_count": (_U32, [_P]),
         "last_error": (_I, [_P]),
     }
 

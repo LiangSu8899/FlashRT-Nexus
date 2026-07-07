@@ -49,6 +49,7 @@ enum class ActionChunkState {
  * fire (model-input side), consume acts on a ready chunk (output side). */
 enum : uint8_t {
     kActionChunkPrepareNone = 0,
+    kActionChunkPrepareProjectedState = 1,
     kActionChunkConsumePlain = 0,
     kActionChunkConsumeSwitch = 1,
     kActionChunkConsumeTemporalFusion = 2,
@@ -91,6 +92,14 @@ struct ActionChunkConfig {
     uint32_t fusion_max_chunks = 0;
     /* switch(latency): seated index = clip(d + switch_offset, 0, len-1). */
     int32_t switch_offset = 0;
+    /* projected_state: integrate the next lookahead_steps delta actions of
+     * the executing chunk into the measured state before firing; the new
+     * chunk is anchored at fire_step + k and consumed from index 0. */
+    uint32_t lookahead_steps = 0;
+    /* Transport for the projected state, +1 encoded: 0 = host transport
+     * (the embedder injects between begin_request and commit_request);
+     * N = producer input port N-1 (SWAP lane; not implemented yet). */
+    uint32_t state_input_port = 0;
 };
 
 class ActionChunkMode {
@@ -138,6 +147,10 @@ public:
      * request. */
     int set_state(const float* state, uint32_t dim);
     int set_state_action_indices(const uint32_t* indices, uint32_t n);
+    /* projected_state prepare: the value computed by the last
+     * begin_request, for host-transport injection. */
+    int projected_state(float* out, uint32_t capacity_dims,
+                        uint32_t* written_dims) const;
 
     bool in_flight() const { return in_flight_; }
     bool has_active_chunk() const { return active_slot_ >= 0; }
@@ -160,6 +173,12 @@ public:
     uint32_t last_d_steps() const { return last_d_steps_; }
     uint64_t chunk_switches() const { return chunk_switches_; }
     uint64_t pruned_chunks() const { return pruned_chunks_; }
+    /* projected_state: a chunk landed before its start step and waits. */
+    bool seated_waiting() const { return waiting_slot_ >= 0; }
+    uint64_t active_start_step() const {
+        return active_slot_ >= 0 ? slot_start_step_[active_slot_] : 0;
+    }
+    uint32_t projected_count() const { return projected_count_; }
     /* Test introspection: the full fused chunk (temporal_fusion only) and
      * the weight table. Raw retained chunks are immutable; fused values
      * live only here. */
@@ -172,6 +191,9 @@ private:
     int copy_output_to_pending_slot();
     int seat_switch();
     int seat_fusion();
+    int seat_projected();
+    int prepare_projected();
+    void promote_waiting();
     void prune_expired();
     uint32_t latency_index(uint64_t start_step) const;
     int state_index(const unsigned char* chunk, uint32_t* out) const;
@@ -193,7 +215,11 @@ private:
     std::vector<double> fusion_acc_;       /* one action, f64 workspace  */
     std::vector<uint8_t> slot_valid_;      /* retained-chunk flags       */
     std::vector<int> retained_;            /* slots, oldest..newest      */
+    std::vector<float> projected_;         /* projected_state output     */
     bool consume_fused_ = false;
+    int waiting_slot_ = -1;                /* seated, start step ahead   */
+    uint32_t projected_count_ = 0;         /* k_actual of last prepare   */
+    uint32_t pending_lookahead_ = 0;       /* k_actual of in-flight fire */
     int active_slot_ = -1;
     int pending_slot_ = -1;
     uint32_t active_index_ = 0;

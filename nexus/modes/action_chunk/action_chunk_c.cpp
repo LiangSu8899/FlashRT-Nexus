@@ -58,6 +58,8 @@ nexus::ActionChunkConfig convert(const nexus_action_chunk_config* in) {
         out.fusion_decay = in->fusion_decay;
         out.fusion_max_chunks = in->fusion_max_chunks;
         out.switch_offset = in->switch_offset;
+        out.lookahead_steps = in->lookahead_steps;
+        out.state_input_port = in->state_input_port;
     }
     return out;
 }
@@ -161,6 +163,27 @@ extern "C" int nexus_action_chunk_set_state(nexus_action_chunk* h,
 extern "C" int nexus_action_chunk_set_state_action_indices(
         nexus_action_chunk* h, const uint32_t* indices, uint32_t n) {
     return h ? h->mode.set_state_action_indices(indices, n) : CAP_ERR_ARG;
+}
+
+extern "C" int nexus_action_chunk_projected_state(
+        nexus_action_chunk* h, float* out, uint32_t capacity_dims,
+        uint32_t* written_dims) {
+    return h ? h->mode.projected_state(out, capacity_dims, written_dims)
+             : CAP_ERR_ARG;
+}
+
+extern "C" int nexus_action_chunk_seated_waiting(nexus_action_chunk* h) {
+    return h ? (h->mode.seated_waiting() ? 1 : 0) : CAP_ERR_ARG;
+}
+
+extern "C" uint64_t nexus_action_chunk_active_start_step(
+        nexus_action_chunk* h) {
+    return h ? h->mode.active_start_step() : 0;
+}
+
+extern "C" uint32_t nexus_action_chunk_projected_count(
+        nexus_action_chunk* h) {
+    return h ? h->mode.projected_count() : 0;
 }
 
 extern "C" int nexus_action_chunk_in_flight(nexus_action_chunk* h) {
