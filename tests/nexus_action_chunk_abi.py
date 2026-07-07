@@ -23,7 +23,19 @@ DEFAULT_PREFIX = "nexus_action_chunk"
 COMPAT_PREFIX = "nexus_rtc_action_chunk"
 
 
+NEXUS_AC_CONSUME_PLAIN = 0
+NEXUS_AC_CONSUME_SWITCH = 1
+NEXUS_AC_CONSUME_TEMPORAL_FUSION = 2
+NEXUS_AC_SWITCH_LATENCY = 0
+NEXUS_AC_SWITCH_STATE = 1
+NEXUS_AC_DTYPE_RAW = 0
+NEXUS_AC_DTYPE_F32 = 1
+
+
 class NexusActionChunkConfig(ctypes.Structure):
+    """Mirror of nexus_action_chunk_config (v2). A v1 caller may pass
+    struct_size = 48 (fields through reserved1 plus tail padding)."""
+
     _fields_ = [
         ("struct_size", ctypes.c_uint32),
         ("reserved", ctypes.c_uint32),
@@ -33,8 +45,24 @@ class NexusActionChunkConfig(ctypes.Structure):
         ("action_bytes", ctypes.c_uint32),
         ("ring_slots", ctypes.c_uint32),
         ("execute_horizon", ctypes.c_uint32),
-        ("deadline_ticks", ctypes.c_int32),
+        ("poll_budget", ctypes.c_int32),
         ("reserved1", ctypes.c_uint32),
+        ("reserved2", ctypes.c_uint32),
+        ("deadline_steps", ctypes.c_int32),
+        ("prepare_policy", ctypes.c_uint8),
+        ("consume_policy", ctypes.c_uint8),
+        ("switch_mode", ctypes.c_uint8),
+        ("miss_policy", ctypes.c_uint8),
+        ("scalar_dtype", ctypes.c_uint8),
+        ("action_representation", ctypes.c_uint8),
+        ("distance_metric", ctypes.c_uint8),
+        ("reserved3", ctypes.c_uint8),
+        ("state_dim", ctypes.c_uint32),
+        ("candidates", ctypes.c_uint32),
+        ("reserved4", ctypes.c_uint32),
+        ("fusion_decay", ctypes.c_double),
+        ("fusion_max_chunks", ctypes.c_uint32),
+        ("switch_offset", ctypes.c_int32),
     ]
 
 
@@ -83,10 +111,17 @@ class ActionChunkAbi:
         "create_for_output_port": (_I, [_P, _U64, _U32, _U32, _U32, _U32, _I,
                                         ctypes.POINTER(_P)]),
         "destroy": (None, [_P]),
+        "begin_request": (_I, [_P]),
+        "commit_request": (_I, [_P]),
         "request": (_I, [_P]),
         "poll": (_I, [_P]),
         "next_action": (_I, [_P, _P, _U64, ctypes.POINTER(_U64)]),
+        "advance_step": (_I, [_P]),
+        "sync_next_chunk": (_I, [_P]),
         "reset": (None, [_P]),
+        "set_state": (_I, [_P, ctypes.POINTER(ctypes.c_float), _U32]),
+        "set_state_action_indices": (_I, [_P, ctypes.POINTER(ctypes.c_uint32),
+                                          _U32]),
         "in_flight": (_I, [_P]),
         "has_active": (_I, [_P]),
         "remaining": (_U32, [_P]),
@@ -99,13 +134,23 @@ class ActionChunkAbi:
         "last_ready_ticks": (_U32, [_P]),
         "max_ready_ticks": (_U32, [_P]),
         "total_ready_ticks": (_U64, [_P]),
+        "action_step": (_U64, [_P]),
+        "held_actions": (_U64, [_P]),
+        "prepared_requests": (_U64, [_P]),
+        "state_updates": (_U64, [_P]),
+        "last_d_steps": (_U32, [_P]),
         "last_error": (_I, [_P]),
     }
 
     def __init__(self, nx, prefix: str = DEFAULT_PREFIX):
         self.prefix = prefix
         for verb, (res, args) in self.VERBS.items():
-            fn = getattr(nx, f"{prefix}_{verb}")
+            try:
+                fn = getattr(nx, f"{prefix}_{verb}")
+            except AttributeError:
+                # The deprecated compat prefix exposes only the v1 verbs.
+                setattr(self, verb, None)
+                continue
             fn.restype = res
             fn.argtypes = args
             setattr(self, verb, fn)

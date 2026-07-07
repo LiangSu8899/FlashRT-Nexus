@@ -50,6 +50,8 @@ enum class ActionChunkState {
 enum : uint8_t {
     kActionChunkPrepareNone = 0,
     kActionChunkConsumePlain = 0,
+    kActionChunkConsumeSwitch = 1,
+    kActionChunkConsumeTemporalFusion = 2,
     kActionChunkSwitchLatency = 0,
     kActionChunkSwitchState = 1,
     kActionChunkMissReportOnly = 0,
@@ -82,6 +84,13 @@ struct ActionChunkConfig {
     uint8_t distance_metric = 0;        /* 0 = l1, 1 = l2 */
     uint32_t state_dim = 0;             /* 0 = no state feed */
     uint32_t candidates = 0;            /* 0 or 1 = single fire (reserved) */
+    /* temporal_fusion: weight(j) = exp(-fusion_decay * j), precomputed at
+     * construction; f64 because the reference semantics are f64 (an f32
+     * decay would shift every table entry). 0 max_chunks = default 3. */
+    double fusion_decay = 0.0;
+    uint32_t fusion_max_chunks = 0;
+    /* switch(latency): seated index = clip(d + switch_offset, 0, len-1). */
+    int32_t switch_offset = 0;
 };
 
 class ActionChunkMode {
@@ -149,11 +158,23 @@ public:
     uint64_t prepared_requests() const { return prepared_requests_; }
     uint64_t state_updates() const { return state_updates_; }
     uint32_t last_d_steps() const { return last_d_steps_; }
+    uint64_t chunk_switches() const { return chunk_switches_; }
+    uint64_t pruned_chunks() const { return pruned_chunks_; }
+    /* Test introspection: the full fused chunk (temporal_fusion only) and
+     * the weight table. Raw retained chunks are immutable; fused values
+     * live only here. */
+    const unsigned char* fused_chunk() const { return fused_.data(); }
+    const double* weight_table() const { return weight_table_.data(); }
 
 private:
     bool chunking_enabled() const;
     unsigned char* slot_ptr(int slot);
     int copy_output_to_pending_slot();
+    int seat_switch();
+    int seat_fusion();
+    void prune_expired();
+    uint32_t latency_index(uint64_t start_step) const;
+    int state_index(const unsigned char* chunk, uint32_t* out) const;
 
     StageDagRunner* runner_ = nullptr;
     ActionChunkConfig config_{};
@@ -166,6 +187,13 @@ private:
     std::vector<float> state_latest_;
     std::vector<float> state_fire_;
     std::vector<uint32_t> state_action_indices_;
+    std::vector<double> state_cum_;        /* delta-integration workspace */
+    std::vector<double> weight_table_;     /* temporal_fusion, len H     */
+    std::vector<unsigned char> fused_;     /* temporal_fusion, H actions */
+    std::vector<double> fusion_acc_;       /* one action, f64 workspace  */
+    std::vector<uint8_t> slot_valid_;      /* retained-chunk flags       */
+    std::vector<int> retained_;            /* slots, oldest..newest      */
+    bool consume_fused_ = false;
     int active_slot_ = -1;
     int pending_slot_ = -1;
     uint32_t active_index_ = 0;
@@ -190,6 +218,8 @@ private:
     uint64_t held_actions_ = 0;
     uint64_t prepared_requests_ = 0;
     uint64_t state_updates_ = 0;
+    uint64_t chunk_switches_ = 0;
+    uint64_t pruned_chunks_ = 0;
 };
 
 }  // namespace nexus

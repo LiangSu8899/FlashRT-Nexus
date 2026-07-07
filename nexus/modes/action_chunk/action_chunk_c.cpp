@@ -55,6 +55,9 @@ nexus::ActionChunkConfig convert(const nexus_action_chunk_config* in) {
         out.distance_metric = in->distance_metric;
         out.state_dim = in->state_dim;
         out.candidates = in->candidates;
+        out.fusion_decay = in->fusion_decay;
+        out.fusion_max_chunks = in->fusion_max_chunks;
+        out.switch_offset = in->switch_offset;
     }
     return out;
 }

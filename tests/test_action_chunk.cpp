@@ -374,6 +374,204 @@ static void test_state_feed() {
     while (mode.poll() != nexus::ActionChunkState::kReady) {}
 }
 
+/* ---- consume policies: validation matrix --------------------------------- */
+
+static void test_policy_validation() {
+    nexus::ActionChunkConfig cfg = chunk_config();
+    cfg.consume_policy = nexus::kActionChunkConsumeTemporalFusion;
+    cfg.scalar_dtype = nexus::kActionChunkDtypeRaw;
+    cfg.ring_slots = 4;
+    CHECK(nexus::ActionChunkMode::validate(cfg) == CAP_ERR_ARG,
+          "fusion with raw dtype is rejected");
+    cfg.scalar_dtype = nexus::kActionChunkDtypeF32;
+    cfg.ring_slots = 2;  /* default max_chunks 3 needs >= 4 */
+    CHECK(nexus::ActionChunkMode::validate(cfg) == CAP_ERR_ARG,
+          "fusion with an undersized ring is rejected");
+    cfg.ring_slots = 4;
+    CHECK(nexus::ActionChunkMode::validate(cfg) == CAP_OK,
+          "fusion with f32 dtype and a sized ring is accepted");
+    cfg.consume_policy = nexus::kActionChunkConsumeSwitch;
+    cfg.switch_mode = nexus::kActionChunkSwitchState;
+    cfg.state_dim = 0;
+    CHECK(nexus::ActionChunkMode::validate(cfg) == CAP_ERR_ARG,
+          "state switch without a state feed is rejected");
+    cfg.state_dim = 1;
+    CHECK(nexus::ActionChunkMode::validate(cfg) == CAP_OK,
+          "state switch with a state feed is accepted");
+    cfg.switch_mode = nexus::kActionChunkSwitchLatency;
+    cfg.scalar_dtype = nexus::kActionChunkDtypeRaw;
+    CHECK(nexus::ActionChunkMode::validate(cfg) == CAP_OK,
+          "latency switch does no arithmetic and accepts raw dtype");
+}
+
+/* ---- float-emitting probe for the arithmetic policies -------------------- */
+
+struct FloatProbe {
+    const float* data = nullptr;  /* 3 floats per chunk */
+};
+
+static int float_get_output(void* p, uint32_t, void* out, uint64_t capacity,
+                            uint64_t* written, int) {
+    constexpr uint64_t kBytes = 12;
+    if (written) *written = kBytes;
+    if (capacity < kBytes) return CAP_ERR_ARG;
+    auto* probe = static_cast<FloatProbe*>(p);
+    std::memcpy(out, probe->data, kBytes);
+    return CAP_OK;
+}
+
+/* ---- consume = switch ----------------------------------------------------- */
+
+static void test_consume_switch_latency() {
+    Fixture fx(true);
+    FloatProbe probe;
+    fx.model.self = &probe;
+    fx.model.get_output = float_get_output;
+    nexus::StageDagRunner runner(fx.ctx, &fx.model);
+    prime_context(runner);
+
+    nexus::ActionChunkConfig cfg = chunk_config();
+    cfg.consume_policy = nexus::kActionChunkConsumeSwitch;
+    nexus::ActionChunkMode mode(&runner, cfg);
+    const float chunk[3] = {10.0f, 20.0f, 30.0f};
+    probe.data = chunk;
+    g_event_pending = 0;
+    CHECK(mode.request() == CAP_OK, "latency-switch fixture fires");
+    CHECK(mode.advance_step() == CAP_OK && mode.advance_step() == CAP_OK,
+          "two controller steps elapse during inference");
+    float out = 0.0f;
+    uint64_t written = 0;
+    CHECK(mode.poll() == nexus::ActionChunkState::kReady &&
+              mode.active_index() == 2,
+          "latency switch seats the chunk at the elapsed-step index");
+    CHECK(mode.next_action(&out, sizeof(out), &written) ==
+                  nexus::ActionChunkState::kReady && out == 30.0f,
+          "latency switch skips the stale prefix");
+
+    nexus::ActionChunkConfig cfg_off = cfg;
+    cfg_off.switch_offset = -1;
+    nexus::ActionChunkMode mode_off(&runner, cfg_off);
+    probe.data = chunk;
+    CHECK(mode_off.request() == CAP_OK, "offset fixture fires");
+    (void)mode_off.advance_step(); (void)mode_off.advance_step();
+    CHECK(mode_off.poll() == nexus::ActionChunkState::kReady &&
+              mode_off.active_index() == 1,
+          "switch_offset biases the seated index");
+
+    nexus::ActionChunkMode mode_clip(&runner, cfg);
+    probe.data = chunk;
+    CHECK(mode_clip.request() == CAP_OK, "clip fixture fires");
+    for (int i = 0; i < 7; ++i) (void)mode_clip.advance_step();
+    CHECK(mode_clip.poll() == nexus::ActionChunkState::kReady &&
+              mode_clip.active_index() == 2,
+          "latency switch clips at the last index");
+}
+
+static void test_consume_switch_state() {
+    Fixture fx(true);
+    FloatProbe probe;
+    fx.model.self = &probe;
+    fx.model.get_output = float_get_output;
+    nexus::StageDagRunner runner(fx.ctx, &fx.model);
+    prime_context(runner);
+
+    nexus::ActionChunkConfig cfg = chunk_config();
+    cfg.consume_policy = nexus::kActionChunkConsumeSwitch;
+    cfg.switch_mode = nexus::kActionChunkSwitchState;
+    cfg.state_dim = 1;
+    nexus::ActionChunkMode mode(&runner, cfg);
+    const float absolute[3] = {10.0f, 20.0f, 30.0f};
+    const float measured[1] = {21.0f};
+    probe.data = absolute;
+    g_event_pending = 0;
+    CHECK(mode.set_state(measured, 1) == CAP_OK, "state feed accepted");
+    CHECK(mode.request() == CAP_OK &&
+              mode.poll() == nexus::ActionChunkState::kReady &&
+              mode.active_index() == 1,
+          "absolute state switch picks the closest action index");
+
+    nexus::ActionChunkConfig cfg_delta = cfg;
+    cfg_delta.action_representation = nexus::kActionChunkReprDeltaCumulative;
+    nexus::ActionChunkMode mode_delta(&runner, cfg_delta);
+    const float deltas[3] = {1.0f, 2.0f, 3.0f};
+    const float at_fire[1] = {10.0f};   /* estimates: 11, 13, 16 */
+    const float at_ready[1] = {14.0f};  /* distances: 3, 1, 2    */
+    probe.data = deltas;
+    CHECK(mode_delta.set_state(at_fire, 1) == CAP_OK &&
+              mode_delta.request() == CAP_OK,
+          "delta fixture snapshots the fire-time state");
+    CHECK(mode_delta.set_state(at_ready, 1) == CAP_OK &&
+              mode_delta.poll() == nexus::ActionChunkState::kReady &&
+              mode_delta.active_index() == 1,
+          "cumulative-delta state switch integrates from the fire snapshot");
+}
+
+/* ---- consume = temporal_fusion -------------------------------------------- */
+
+static void test_consume_temporal_fusion() {
+    Fixture fx(true);
+    FloatProbe probe;
+    fx.model.self = &probe;
+    fx.model.get_output = float_get_output;
+    nexus::StageDagRunner runner(fx.ctx, &fx.model);
+    prime_context(runner);
+
+    nexus::ActionChunkConfig cfg = chunk_config();
+    cfg.consume_policy = nexus::kActionChunkConsumeTemporalFusion;
+    cfg.scalar_dtype = nexus::kActionChunkDtypeF32;
+    cfg.ring_slots = 4;
+    cfg.fusion_decay = 0.0;   /* uniform weights: fused = mean */
+    cfg.fusion_max_chunks = 3;
+    nexus::ActionChunkMode mode(&runner, cfg);
+    CHECK(mode.weight_table()[0] == 1.0 && mode.weight_table()[2] == 1.0,
+          "decay 0 builds a uniform weight table");
+
+    const float chunk1[3] = {0.0f, 1.0f, 2.0f};
+    const float chunk2[3] = {100.0f, 101.0f, 102.0f};
+    const float chunk3[3] = {200.0f, 201.0f, 202.0f};
+    float out = 0.0f;
+    uint64_t written = 0;
+
+    probe.data = chunk1;
+    g_event_pending = 0;
+    CHECK(mode.request() == CAP_OK &&
+              mode.poll() == nexus::ActionChunkState::kReady &&
+              mode.active_index() == 0,
+          "first chunk fuses with itself and seats at index 0");
+    CHECK(mode.next_action(&out, sizeof(out), &written) ==
+                  nexus::ActionChunkState::kReady && out == 0.0f,
+          "single-chunk fusion is the identity");
+    /* Second emission triggers the prefetch at grid step 2. */
+    probe.data = chunk2;
+    CHECK(mode.next_action(&out, sizeof(out), &written) ==
+                  nexus::ActionChunkState::kReady && out == 1.0f &&
+              mode.in_flight(),
+          "prefetch fires the second chunk at the horizon");
+    CHECK(mode.poll() == nexus::ActionChunkState::kReady &&
+              mode.active_index() == 0,
+          "second chunk seats at index 0 (no steps elapsed while pending)");
+    const float* fused =
+        reinterpret_cast<const float*>(mode.fused_chunk());
+    CHECK(fused[0] == 51.0f && fused[1] == 101.0f && fused[2] == 102.0f,
+          "overlap fuses to the uniform mean, tail stays raw");
+    CHECK(mode.next_action(&out, sizeof(out), &written) ==
+                  nexus::ActionChunkState::kReady && out == 51.0f,
+          "consumption reads the fused values");
+
+    /* Third chunk at grid step 4: chunk1 (steps 0..2) expires. */
+    probe.data = chunk3;
+    CHECK(mode.next_action(&out, sizeof(out), &written) ==
+                  nexus::ActionChunkState::kReady && out == 101.0f &&
+              mode.in_flight(),
+          "prefetch fires the third chunk");
+    CHECK(mode.poll() == nexus::ActionChunkState::kReady &&
+              mode.pruned_chunks() == 1,
+          "an expired chunk is pruned before fusion");
+    fused = reinterpret_cast<const float*>(mode.fused_chunk());
+    CHECK(fused[0] == 151.0f && fused[1] == 201.0f && fused[2] == 202.0f,
+          "fusion window slides over the retained chunks");
+}
+
 /* ---- determinism / replay ------------------------------------------------ */
 
 struct ScriptResult {
@@ -477,6 +675,10 @@ int main() {
     test_hold_last();
     test_sync_next_chunk();
     test_state_feed();
+    test_policy_validation();
+    test_consume_switch_latency();
+    test_consume_switch_state();
+    test_consume_temporal_fusion();
     test_determinism_replay();
     test_c_abi_new_verbs();
     std::printf(g_fail ? "\n== ACTION CHUNK TEST FAILED ==\n"
