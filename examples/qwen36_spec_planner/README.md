@@ -17,7 +17,7 @@ state-first way to make them coexist:
   acceptance rate intact (no warm-up ramp, the drafter window comes
   back with it);
 - the actor runs through the Nexus **RTC action-chunk mode**
-  (`examples/pi05_rtc`) and never blocks on the planner.
+  (`examples/pi05_action_chunk`) and never blocks on the planner.
 
 ```
 control tick (fixed cadence)
@@ -36,7 +36,7 @@ control tick (fixed cadence)
   boundary snapshot/restore, and a warm-resume acceptance check.
   Needs only FlashRT and the Qwen3.6 checkpoints.
 - `run.py --with-actor` — adds the Pi0.5 RTC actor through the Nexus
-  C ABI in the same process (see `examples/pi05_rtc` for the actor's
+  C ABI in the same process (see `examples/pi05_action_chunk` for the actor's
   own prerequisites). The actor owns the tick; the planner fills the
   gaps.
 
@@ -45,7 +45,7 @@ control tick (fixed cadence)
 - FlashRT built for your GPU with the Qwen3.6 NVFP4 path (see
   `docs/qwen36_dflash.md` in the FlashRT repo), plus the Qwen3.6-27B
   NVFP4 + FP8-MTP checkpoints and the z-lab DFlash drafter.
-- For `--with-actor`: everything `examples/pi05_rtc` needs.
+- For `--with-actor`: everything `examples/pi05_action_chunk` needs.
 
 ## Run
 

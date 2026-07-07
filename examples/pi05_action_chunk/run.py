@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Example runner — Pi0.5 RTC action chunks over Nexus.
+"""Example runner — Pi0.5 action chunks over Nexus.
 
 Thin presentation wrapper: validates the environment, then delegates to
 the acceptance gate (tests/gate_pi05_action_chunk.py), which is the
@@ -13,7 +13,7 @@ import sys
 
 
 def _fail(msg: str) -> "None":
-    raise SystemExit(f"[examples/pi05_rtc] {msg}")
+    raise SystemExit(f"[examples/pi05_action_chunk] {msg}")
 
 
 def main() -> None:

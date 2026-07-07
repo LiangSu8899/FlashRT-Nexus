@@ -12,4 +12,4 @@ only when a family reaches two members.
 
 | Mode | Interaction pattern | Entry |
 |---|---|---|
-| [`action_chunk/`](action_chunk/) | embodied async inference: fire an action stage, execute the previous chunk until the new one is ready, fall back on deadline overrun | `nexus/modes/action_chunk` |
+| [`action_chunk/`](action_chunk/) | embodied async inference: fire an action stage, execute the previous chunk until the new one is ready, fall back on deadline overrun; prepare/consume policy slots cover the async-chunking method family | `nexus/modes/action_chunk` |

@@ -1,4 +1,4 @@
-# Example — Pi0.5 RTC Action Chunks over Nexus
+# Example — Pi0.5 Action Chunks over Nexus
 
 The reference assembly of the four layers on a real model:
 
@@ -13,8 +13,8 @@ Pi0.5 FlashRT producer          exports the context_action model-runtime face
                                 on deadline overrun
 ```
 
-The interaction pattern this demonstrates is **real-time chunking**
-(RTC): a robot control loop that never blocks on inference. The mode
+The interaction pattern this demonstrates is asynchronous action
+chunking: a robot control loop that never blocks on inference. The mode
 keeps a ring of completed action chunks; the loop consumes
 `next_action()` at its own rate while the next chunk is in flight, and
 a missed deadline is a *state* (`FALLBACK`) the loop can act on — not
@@ -37,7 +37,7 @@ export NEXUS_LIB=/path/to/FlashRT-Nexus/build/libcapsule_nexus_flashrt.so
 # optional, defaults under FLASHRT_DIR:
 # export PI05_LIB=/path/to/libflashrt_cpp_pi05_c.so
 
-python examples/pi05_rtc/run.py --checkpoint /path/to/pi05_checkpoint
+python examples/pi05_action_chunk/run.py --checkpoint /path/to/pi05_checkpoint
 ```
 
 `run.py` validates the environment and delegates to the acceptance
@@ -50,7 +50,9 @@ chunk numerically against a plain `cap_model_tick` baseline. Add
 
 - The gate source is the wiring reference: producer export (a few
   lines on the model pipeline), `ctypes` adoption, `StageDAG` creation,
-  and the four-verb RTC drive loop.
+  and the four-verb drive loop. The policy gates
+  (`gate_pi05_action_chunk_{fusion,projected,prefix,composed}.py`)
+  extend the same wiring with one policy each.
 - [`docs/modes.md`](../../docs/modes.md) explains the mode contract
   this example instantiates.
 - [`docs/adaptation_map.md`](../../docs/adaptation_map.md) tells you
