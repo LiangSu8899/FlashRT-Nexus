@@ -42,7 +42,7 @@ int ActionChunkMode::config_from_output_port(
 }
 
 int ActionChunkMode::validate(const ActionChunkConfig& config) {
-    if (config.prepare_policy > kActionChunkPrepareProjectedState)
+    if (config.prepare_policy > kActionChunkPreparePrevChunkPrefix)
         return CAP_ERR_ARG;
     if (config.consume_policy > kActionChunkConsumeTemporalFusion)
         return CAP_ERR_ARG;
@@ -93,6 +93,21 @@ int ActionChunkMode::validate(const ActionChunkConfig& config) {
          * lands with the first producer that declares a numeric state port. */
         if (config.state_input_port != 0) return CAP_ERR_ARG;
     }
+    if (config.prepare_policy == kActionChunkPreparePrevChunkPrefix) {
+        /* The in-graph correction owns the seam; consumption pairs with the
+         * latency switch (seat at d). State-mode pairing is unvalidated. */
+        if (config.consume_policy != kActionChunkConsumeSwitch ||
+            config.switch_mode != kActionChunkSwitchLatency)
+            return CAP_ERR_ARG;
+        if (!chunked) return CAP_ERR_ARG;
+        if (config.prefix_len == 0 ||
+            config.prefix_len > config.chunk_length)
+            return CAP_ERR_ARG;
+        if (config.raw_out_port == 0 || config.raw_action_bytes == 0)
+            return CAP_ERR_ARG;
+        /* +1 encoded; only host transport (0) is implemented. */
+        if (config.prev_chunk_port != 0) return CAP_ERR_ARG;
+    }
     return CAP_OK;
 }
 
@@ -129,6 +144,14 @@ ActionChunkMode::ActionChunkMode(
         if (config_.prepare_policy == kActionChunkPrepareProjectedState)
             projected_.resize(config_.state_dim, 0.0f);
     }
+    if (config_.prepare_policy == kActionChunkPreparePrevChunkPrefix &&
+        config_.chunk_length && config_.raw_action_bytes) {
+        const uint64_t raw_bytes =
+            static_cast<uint64_t>(config_.chunk_length) *
+            static_cast<uint64_t>(config_.raw_action_bytes);
+        prev_raw_.resize(raw_bytes, 0);
+        prev_staged_.resize(raw_bytes, 0);
+    }
 }
 
 ActionChunkMode::ActionChunkMode(StageDagRunner* runner,
@@ -148,6 +171,10 @@ int ActionChunkMode::begin_request() {
                   state_fire_.begin());
     if (config_.prepare_policy == kActionChunkPrepareProjectedState) {
         int rc = prepare_projected();
+        if (rc != CAP_OK) return rc;
+    }
+    if (config_.prepare_policy == kActionChunkPreparePrevChunkPrefix) {
+        int rc = prepare_prev_chunk();
         if (rc != CAP_OK) return rc;
     }
     ++prepared_requests_;
@@ -219,6 +246,23 @@ ActionChunkState ActionChunkMode::poll() {
         last_d_steps_ = static_cast<uint32_t>(action_step_ - fire_step_);
         if (deadline_reported_) ++late_chunks_;
         if (chunking_enabled()) {
+            if (config_.prepare_policy == kActionChunkPreparePrevChunkPrefix) {
+                /* Retain the raw-space chunk for the next fire's prefix.
+                 * Read it before the postprocessed copy: both views window
+                 * the same producer buffer. SWAP ports are served from
+                 * their device window, STAGED ports through the verb. */
+                uint64_t raw_written = 0;
+                int rraw = runner_->read_output(
+                    config_.raw_out_port - 1, prev_raw_.data(),
+                    prev_raw_.size(), &raw_written);
+                if (rraw != CAP_OK || raw_written != prev_raw_.size()) {
+                    last_error_ = rraw != CAP_OK ? rraw : CAP_ERR_ARG;
+                    in_flight_ = false;
+                    pending_slot_ = -1;
+                    return ActionChunkState::kError;
+                }
+                has_raw_prev_ = true;
+            }
             int rc = copy_output_to_pending_slot();
             if (rc != CAP_OK) {
                 last_error_ = rc;
@@ -407,6 +451,7 @@ void ActionChunkMode::reset() {
     has_held_ = false;
     consume_fused_ = false;
     waiting_slot_ = -1;
+    has_raw_prev_ = false;
     retained_.clear();
     std::fill(slot_valid_.begin(), slot_valid_.end(), 0);
     pending_ticks_ = 0;
@@ -650,6 +695,39 @@ int ActionChunkMode::seat_projected() {
         waiting_slot_ = pending_slot_;
     }
     pending_slot_ = -1;
+    return CAP_OK;
+}
+
+/* Stage the previous raw chunk re-indexed onto the new frame: new row i
+ * takes the raw action the robot will be executing i steps after this fire,
+ * i.e. old row (consumption index + i), clipped to the last row. Before any
+ * chunk exists the stage image is zero -- a documented cold start; real
+ * deployments warm up through the plain plan. */
+int ActionChunkMode::prepare_prev_chunk() {
+    if (prev_staged_.empty()) return CAP_ERR_ARG;
+    if (!has_raw_prev_) {
+        std::fill(prev_staged_.begin(), prev_staged_.end(), 0);
+        return CAP_OK;
+    }
+    const uint32_t length = config_.chunk_length;
+    const uint32_t row = config_.raw_action_bytes;
+    const uint32_t base = active_slot_ >= 0 ? active_index_ : length;
+    for (uint32_t i = 0; i < length; ++i) {
+        uint32_t src = base + i;
+        if (src > length - 1) src = length - 1;
+        std::memcpy(prev_staged_.data() + static_cast<uint64_t>(i) * row,
+                    prev_raw_.data() + static_cast<uint64_t>(src) * row,
+                    row);
+    }
+    return CAP_OK;
+}
+
+int ActionChunkMode::prev_chunk_staged(void* out, uint64_t capacity,
+                                       uint64_t* written) const {
+    if (written) *written = prev_staged_.size();
+    if (!out || prev_staged_.empty() || capacity < prev_staged_.size())
+        return CAP_ERR_ARG;
+    std::memcpy(out, prev_staged_.data(), prev_staged_.size());
     return CAP_OK;
 }
 

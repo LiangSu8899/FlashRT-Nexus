@@ -50,6 +50,7 @@ enum class ActionChunkState {
 enum : uint8_t {
     kActionChunkPrepareNone = 0,
     kActionChunkPrepareProjectedState = 1,
+    kActionChunkPreparePrevChunkPrefix = 2,
     kActionChunkConsumePlain = 0,
     kActionChunkConsumeSwitch = 1,
     kActionChunkConsumeTemporalFusion = 2,
@@ -100,6 +101,16 @@ struct ActionChunkConfig {
      * (the embedder injects between begin_request and commit_request);
      * N = producer input port N-1 (SWAP lane; not implemented yet). */
     uint32_t state_input_port = 0;
+    /* prev_chunk_prefix: the producer's in-graph correction freezes the
+     * first prefix_len rows of the new chunk to the previous raw chunk,
+     * re-indexed to the new frame. The raw chunk lives in the model's own
+     * action space and dtype (raw_action_bytes per row) and is retained
+     * from raw_out_port (+1 encoded, required). prev_chunk_port is the
+     * write-back input port, +1 encoded: 0 = host transport. */
+    uint32_t prefix_len = 0;
+    uint32_t prev_chunk_port = 0;
+    uint32_t raw_out_port = 0;
+    uint32_t raw_action_bytes = 0;
 };
 
 class ActionChunkMode {
@@ -151,6 +162,10 @@ public:
      * begin_request, for host-transport injection. */
     int projected_state(float* out, uint32_t capacity_dims,
                         uint32_t* written_dims) const;
+    /* prev_chunk_prefix prepare: the re-indexed previous raw chunk staged
+     * by the last begin_request, for host-transport injection. */
+    int prev_chunk_staged(void* out, uint64_t capacity,
+                          uint64_t* written) const;
 
     bool in_flight() const { return in_flight_; }
     bool has_active_chunk() const { return active_slot_ >= 0; }
@@ -193,6 +208,7 @@ private:
     int seat_fusion();
     int seat_projected();
     int prepare_projected();
+    int prepare_prev_chunk();
     void promote_waiting();
     void prune_expired();
     uint32_t latency_index(uint64_t start_step) const;
@@ -216,6 +232,9 @@ private:
     std::vector<uint8_t> slot_valid_;      /* retained-chunk flags       */
     std::vector<int> retained_;            /* slots, oldest..newest      */
     std::vector<float> projected_;         /* projected_state output     */
+    std::vector<unsigned char> prev_raw_;  /* retained raw chunk         */
+    std::vector<unsigned char> prev_staged_;  /* re-indexed write image  */
+    bool has_raw_prev_ = false;
     bool consume_fused_ = false;
     int waiting_slot_ = -1;                /* seated, start step ahead   */
     uint32_t projected_count_ = 0;         /* k_actual of last prepare   */

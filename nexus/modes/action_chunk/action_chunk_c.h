@@ -30,7 +30,8 @@ enum nexus_action_chunk_state {
 
 enum nexus_ac_prepare_policy {
     NEXUS_AC_PREPARE_NONE = 0,
-    NEXUS_AC_PREPARE_PROJECTED_STATE = 1
+    NEXUS_AC_PREPARE_PROJECTED_STATE = 1,
+    NEXUS_AC_PREPARE_PREV_CHUNK_PREFIX = 2
 };
 
 enum nexus_ac_consume_policy {
@@ -95,6 +96,10 @@ typedef struct nexus_action_chunk_config {
     int32_t  switch_offset;     /* switch(latency): idx = clip(d + offset)  */
     uint32_t lookahead_steps;   /* projected_state: delta steps integrated  */
     uint32_t state_input_port;  /* +1 encoded: 0 = host transport           */
+    uint32_t prefix_len;        /* prev_chunk_prefix: capture-time length   */
+    uint32_t prev_chunk_port;   /* +1 encoded: 0 = host transport           */
+    uint32_t raw_out_port;      /* +1 encoded raw-chunk output port         */
+    uint32_t raw_action_bytes;  /* bytes per raw action row                 */
 } nexus_action_chunk_config;
 
 typedef struct nexus_action_chunk_s nexus_action_chunk;
@@ -144,6 +149,11 @@ int  nexus_action_chunk_set_state_action_indices(nexus_action_chunk*,
 int  nexus_action_chunk_projected_state(nexus_action_chunk*,
                                         float* out, uint32_t capacity_dims,
                                         uint32_t* written_dims);
+/* prev_chunk_prefix prepare: read the re-indexed previous raw chunk staged
+ * by the last begin_request for host-transport injection. */
+int  nexus_action_chunk_prev_chunk_staged(nexus_action_chunk*,
+                                          void* out, uint64_t capacity,
+                                          uint64_t* written);
 
 int      nexus_action_chunk_in_flight(nexus_action_chunk*);
 int      nexus_action_chunk_has_active(nexus_action_chunk*);
