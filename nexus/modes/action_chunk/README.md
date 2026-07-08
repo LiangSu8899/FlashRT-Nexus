@@ -49,6 +49,34 @@ its start step). Everything else is rejected at create.
 | `prev_chunk_prefix + switch` | real-time chunking, hard-prefix variant |
 | `projected_state + temporal_fusion` | composition (experimental) |
 
+## Choosing a policy
+
+The output-side consume policies (`switch`, `temporal_fusion`) make no
+assumption about the action parameterization — they operate on the chunk
+the model returns. Under a controlled-latency LIBERO evaluation their
+advantage over naive `plain` seating grows with the injected latency
+(the seam a stale chunk creates gets larger, and skipping/fusing it away
+matters more), while `plain` degrades. They are the default choice for
+latency compensation. `prev_chunk_prefix` reaches the same robustness by
+construction — the producer's in-graph freeze — wherever the prefix
+graph is exposed.
+
+`projected_state` compensates on the input side, and its applicability
+depends on the action space. It integrates action deltas into the
+measured state by cumulative addition (`delta_cumulative`), which is
+exact only for dimensions that compose additively — translation,
+velocity, and similar first-order commands. For action spaces that carry
+orientation as non-additive parameters (axis-angle or quaternion pose
+deltas), integrating rotation additively accumulates error that grows
+with `lookahead_steps`; on such spaces the projection provides no benefit
+over naive seating. Restrict the projection to the additively-composable
+dimensions via `set_state_action_indices`, or compute the projection in
+the embedder (proper composition) and inject the result through host
+transport. The mode integrates whatever deltas it is given; which
+dimensions are projectable is a model/action-space property the embedder
+owns. The `experimental` composition inherits the same applicability
+bound.
+
 ## Transport grading
 
 Policies that write producer inputs use `+1`-encoded transport fields
