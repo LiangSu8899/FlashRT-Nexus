@@ -70,6 +70,12 @@ nexus_embedded_tick_result result = {0};
 nexus_embedded_step(session, inputs, 2, outputs, 1, &result);
 ```
 
+[`examples/mindon_pi05_embedded_host.cpp`](../examples/mindon_pi05_embedded_host.cpp)
+contains the same shape as a compile-checked C++ wrapper. It starts from an
+already adopted `cap_model_runtime*`, verifies `images`/`noise`/`actions` port
+update classes, sends optional `prompt`/`state` only when those ports exist,
+and leaves all Pi0.5 formatting and tensor semantics in the FlashRT producer.
+
 Transport adapters, ROS2 callbacks, shared-memory readers, or camera SDK loops
 should only map external buffers into `nexus_embedded_input[]` and
 `nexus_embedded_output[]`. They should not own model setup/capture or interpret
