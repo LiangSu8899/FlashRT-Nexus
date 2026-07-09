@@ -73,6 +73,10 @@ add_executable(test_embedded_session tests/test_embedded_session.cpp)
 target_link_libraries(test_embedded_session PRIVATE nexus_l2 capsule_backend_stub)
 add_test(NAME embedded_session COMMAND test_embedded_session)
 
+add_library(example_mindon_pi05_embedded_host STATIC
+  examples/mindon_pi05_embedded_host.cpp)
+target_link_libraries(example_mindon_pi05_embedded_host PRIVATE nexus_l2)
+
 # ---- L0: FlashRT exec backend (optional; needs CUDA + libflashrt_exec) ------
 # Configure with:
 #   -DCAPSULE_BUILD_FLASHRT_BACKEND=ON -DFLASHRT_EXEC_DIR=/path/to/FlashRT/exec
