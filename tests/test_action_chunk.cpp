@@ -667,6 +667,41 @@ static void test_prepare_projected_state() {
     cfg.state_input_port = 2;
     CHECK(nexus::ActionChunkMode::validate_model_ports(&runner, cfg) == CAP_OK,
           "projected state accepts a matching STATE/F32/STAGED port");
+    fx.ports[1].modality = 0;
+    CHECK(nexus::ActionChunkMode::validate_model_ports(&runner, cfg) ==
+              CAP_ERR_ARG,
+          "projected state rejects the wrong port modality");
+    fx.ports[1].modality = 3;
+    fx.ports[1].dtype = 2;
+    CHECK(nexus::ActionChunkMode::validate_model_ports(&runner, cfg) ==
+              CAP_ERR_ARG,
+          "projected state rejects the wrong port dtype");
+    fx.ports[1].dtype = 1;
+    fx.ports[1].direction = 1;
+    CHECK(nexus::ActionChunkMode::validate_model_ports(&runner, cfg) ==
+              CAP_ERR_ARG,
+          "projected state rejects an output port");
+    fx.ports[1].direction = 0;
+    fx.ports[1].update = 0;
+    CHECK(nexus::ActionChunkMode::validate_model_ports(&runner, cfg) ==
+              CAP_ERR_ARG,
+          "projected state rejects a non-STAGED port");
+    fx.ports[1].update = 1;
+    fx.ports[1].rank = 2;
+    CHECK(nexus::ActionChunkMode::validate_model_ports(&runner, cfg) ==
+              CAP_ERR_ARG,
+          "projected state rejects a non-vector state port");
+    fx.ports[1].rank = 1;
+    fx.state_shape[0] = 2;
+    CHECK(nexus::ActionChunkMode::validate_model_ports(&runner, cfg) ==
+              CAP_ERR_ARG,
+          "projected state rejects a state shape mismatch");
+    fx.state_shape[0] = 1;
+    fx.model.set_input = nullptr;
+    CHECK(nexus::ActionChunkMode::validate_model_ports(&runner, cfg) ==
+              CAP_ERR_ARG,
+          "projected state rejects a producer without set_input");
+    fx.model.set_input = float_set_input;
 
     nexus::ActionChunkMode mode(&runner, cfg);
     CHECK(mode.begin_request() == CAP_ERR_ARG,
