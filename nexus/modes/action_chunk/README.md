@@ -70,8 +70,9 @@ orientation as non-additive parameters (axis-angle or quaternion pose
 deltas), integrating rotation additively accumulates error that grows
 with `lookahead_steps`; on such spaces the projection provides no benefit
 over naive seating. Restrict the projection to the additively-composable
-dimensions via `set_state_action_indices`, or compute the projection in
-the embedder (proper composition) and inject the result through host
+dimensions via `set_state_action_indices`; map a state dimension to
+`UINT32_MAX` to preserve it without integrating an action column. Or compute
+the projection in the embedder (proper composition) and inject it through host
 transport. The mode integrates whatever deltas it is given; which
 dimensions are projectable is a model/action-space property the embedder
 owns. The `experimental` composition inherits the same applicability
@@ -84,10 +85,16 @@ Policies that write producer inputs use `+1`-encoded transport fields
 mode computes and exposes the value (`projected_state()`,
 `prev_chunk_staged()`) between `begin_request` and `commit_request`,
 and the embedder injects it through its model-specific path. Host
-transport is the gate/transitional lane; the SWAP-port lane (microsecond
-writes, no host round-trip) is the production lane and lands when the
-producer declares the ports. Output-side SWAP ports are already served
-directly from their device window (`StageDagRunner::read_output`).
+transport remains available for producers without a compatible port.
+
+For `projected_state`, a nonzero `state_input_port` selects a producer-declared
+`STATE/F32/STAGED` input. Its rank-1 shape must equal `state_dim`; the mode
+validates that schema at create and calls the generic `set_input` verb during
+`begin_request`. The producer owns state semantics and hot-path staging;
+Nexus only computes the configured projection and moves its bytes. A schema
+mismatch is rejected at setup, never after a fire. `prev_chunk_port` remains
+host-transport-only. Output-side SWAP ports are served directly from their
+declared device window (`StageDagRunner::read_output`).
 
 - C++: `action_chunk.h` (`ActionChunkConfig`, `ActionChunkMode`) —
   config geometry can be derived from the ACTION output port shape via
@@ -105,7 +112,7 @@ directly from their device window (`StageDagRunner::read_output`).
 
 - `tests/test_action_chunk.cpp` — mechanism and policy properties on
   the stub backend (versioning, the two clocks, hold-last, seating,
-  waiting, determinism replay).
+  waiting, projected-state port staging, determinism replay).
 - `tests/test_action_chunk_oracle.cpp` — golden-vector replay against
   the reference semantics (fusion bit-exact in f32, projection to one
   ulp); skips unless `NEXUS_AC_VECTORS` / `NEXUS_AC_PROJ_VECTORS` are
@@ -115,7 +122,9 @@ directly from their device window (`StageDagRunner::read_output`).
   `..._fusion` (raw vs baseline + fused vs reference),
   `..._projected` (projection vs reference + chunk vs baseline under
   the injected state), `..._prefix` (staged bytes vs independent
-  recompute + chunk vs baseline), `..._composed` (all four seams).
+  recompute + chunk vs baseline), `..._composed` (all four seams), and
+  `gate_pi05_native_projected_port` (native STATE/STAGED port vs manual
+  staging, bit-exact actions).
 
 Runnable assembly:
 [`examples/pi05_action_chunk`](../../../examples/pi05_action_chunk/)

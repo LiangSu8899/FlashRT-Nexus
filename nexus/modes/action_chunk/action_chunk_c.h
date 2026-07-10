@@ -95,7 +95,7 @@ typedef struct nexus_action_chunk_config {
     uint32_t fusion_max_chunks; /* 0 = default 3                            */
     int32_t  switch_offset;     /* switch(latency): idx = clip(d + offset)  */
     uint32_t lookahead_steps;   /* projected_state: delta steps integrated  */
-    uint32_t state_input_port;  /* +1 encoded: 0 = host transport           */
+    uint32_t state_input_port;  /* +1 encoded STATE/F32/STAGED input port   */
     uint32_t prefix_len;        /* prev_chunk_prefix: capture-time length   */
     uint32_t prev_chunk_port;   /* +1 encoded: 0 = host transport           */
     uint32_t raw_out_port;      /* +1 encoded raw-chunk output port         */
@@ -141,11 +141,13 @@ void nexus_action_chunk_reset(nexus_action_chunk*);
 /* State feed (dim must equal config.state_dim; values must be finite). */
 int  nexus_action_chunk_set_state(nexus_action_chunk*,
                                   const float* state, uint32_t dim);
+/* One entry per state dimension. UINT32_MAX preserves that dimension instead
+ * of integrating an action column. Frozen after the first request. */
 int  nexus_action_chunk_set_state_action_indices(nexus_action_chunk*,
                                                  const uint32_t* indices,
                                                  uint32_t n);
-/* projected_state prepare: read the value computed by the last
- * begin_request for host-transport injection. */
+/* projected_state prepare: read the value computed by the last begin_request.
+ * Hosts may use it when state_input_port selects host transport. */
 int  nexus_action_chunk_projected_state(nexus_action_chunk*,
                                         float* out, uint32_t capacity_dims,
                                         uint32_t* written_dims);
