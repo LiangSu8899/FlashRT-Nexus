@@ -83,6 +83,16 @@ def main() -> None:
                     help="directory holding vlash.py")
     args = ap.parse_args()
 
+    missing_oracle = [
+        name for name in ("rtc.py", "vlash.py")
+        if not os.path.isfile(os.path.join(args.oracle_dir, name))
+    ]
+    if missing_oracle:
+        ap.error(
+            f"--oracle-dir is missing {', '.join(missing_oracle)}; "
+            "point it at the independent FlashRT reference runtime"
+        )
+
     oracle_mod = load_oracle_module(args.oracle_dir)
     AsyncVLAShRunner = oracle_mod.AsyncVLAShRunner
     VLAShConfig = oracle_mod.VLAShConfig
