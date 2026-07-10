@@ -27,6 +27,8 @@ static int g_fail = 0;
 
 struct ChunkProbe {
     int reads = 0;
+    int state_writes = 0;
+    float last_state = 0.0f;
 };
 
 static int chunk_get_output(void* p, uint32_t, void* out, uint64_t capacity,
@@ -39,6 +41,15 @@ static int chunk_get_output(void* p, uint32_t, void* out, uint64_t capacity,
     for (uint64_t i = 0; i < kBytes; ++i)
         dst[i] = static_cast<unsigned char>('A' + probe->reads + i);
     probe->reads += 1;
+    return CAP_OK;
+}
+
+static int chunk_set_input(void* p, uint32_t port, const void* data,
+                           uint64_t bytes, int) {
+    if (port != 1 || !data || bytes != sizeof(float)) return CAP_ERR_ARG;
+    auto* probe = static_cast<ChunkProbe*>(p);
+    std::memcpy(&probe->last_state, data, sizeof(float));
+    ++probe->state_writes;
     return CAP_OK;
 }
 
@@ -92,7 +103,8 @@ struct Fixture {
     int deps[1][2] = {{1, 0}};
     cap_schedule schedule{};
     int64_t shape[2] = {3, 1};
-    cap_model_port ports[1]{};
+    int64_t state_shape[1] = {1};
+    cap_model_port ports[2]{};
     cap_model_runtime model{};
 
     explicit Fixture(bool async_events) {
@@ -124,13 +136,21 @@ struct Fixture {
         ports[0].update = 1;
         ports[0].shape = shape;
         ports[0].rank = 2;
+        ports[1].name = "state";
+        ports[1].modality = 3;
+        ports[1].dtype = 1;
+        ports[1].direction = 0;
+        ports[1].update = 1;
+        ports[1].shape = state_shape;
+        ports[1].rank = 1;
         model.backend = &be;
         model.ports = ports;
-        model.n_ports = 1;
+        model.n_ports = 2;
         model.stages = stages;
         model.n_stages = 2;
         model.schedule = schedule;
         model.self = &chunks;
+        model.set_input = chunk_set_input;
         model.get_output = chunk_get_output;
     }
 
@@ -215,6 +235,30 @@ static void test_config_versioning() {
     CHECK(nexus_action_chunk_create(dag, &cfg, &h) == CAP_OK && h,
           "candidates == 1 is accepted");
     nexus_action_chunk_destroy(h);
+    h = nullptr;
+
+    cfg.prepare_policy = NEXUS_AC_PREPARE_PROJECTED_STATE;
+    cfg.scalar_dtype = NEXUS_AC_DTYPE_F32;
+    cfg.action_representation = NEXUS_AC_REPR_DELTA_CUMULATIVE;
+    cfg.state_dim = 1;
+    cfg.lookahead_steps = 2;
+    cfg.state_input_port = 1;
+    CHECK(nexus_action_chunk_create(dag, &cfg, &h) == CAP_ERR_ARG && !h,
+          "C create rejects a non-state projected-state input port");
+    cfg.state_input_port = 2;
+    CHECK(nexus_action_chunk_create(dag, &cfg, &h) == CAP_OK && h,
+          "C create accepts a matching STATE/F32/STAGED input port");
+    const float measured[1] = {7.0f};
+    CHECK(nexus_action_chunk_set_state(h, measured, 1) == CAP_OK &&
+              nexus_action_chunk_begin_request(h) == CAP_OK &&
+              fx.chunks.state_writes == 1 && fx.chunks.last_state == 7.0f,
+          "C begin stages projected state through the declared model port");
+    nexus_action_chunk_destroy(h);
+    h = nullptr;
+
+    cfg.prepare_policy = NEXUS_AC_PREPARE_NONE;
+    CHECK(nexus_action_chunk_create(dag, &cfg, &h) == CAP_ERR_ARG && !h,
+          "state_input_port is exclusive to projected-state prepare");
 
     nexus_stage_dag_destroy(dag);
 }
@@ -362,14 +406,17 @@ static void test_state_feed() {
     CHECK(mode.set_state(good, 3) == CAP_OK && mode.state_updates() == 1,
           "finite state of the declared dimension is accepted");
 
-    const uint32_t dup[2] = {1, 1};
-    const uint32_t idx[2] = {0, 2};
-    CHECK(mode.set_state_action_indices(dup, 2) == CAP_ERR_ARG,
+    const uint32_t dup[3] = {0, 0, UINT32_MAX};
+    const uint32_t idx[3] = {0, UINT32_MAX, UINT32_MAX};
+    const uint32_t empty[3] = {UINT32_MAX, UINT32_MAX, UINT32_MAX};
+    CHECK(mode.set_state_action_indices(dup, 3) == CAP_ERR_ARG,
           "duplicate state-action indices are rejected");
-    CHECK(mode.set_state_action_indices(idx, 2) == CAP_OK,
+    CHECK(mode.set_state_action_indices(empty, 3) == CAP_ERR_ARG,
+          "an entirely unprojected state-action map is rejected");
+    CHECK(mode.set_state_action_indices(idx, 3) == CAP_OK,
           "state-action indices are accepted before the first request");
     CHECK(mode.request() == CAP_OK, "state fixture fires");
-    CHECK(mode.set_state_action_indices(idx, 2) == CAP_ERR_ARG,
+    CHECK(mode.set_state_action_indices(idx, 3) == CAP_ERR_ARG,
           "state-action indices are frozen after the first request");
     while (mode.poll() != nexus::ActionChunkState::kReady) {}
 }
@@ -408,6 +455,8 @@ static void test_policy_validation() {
 
 struct FloatProbe {
     const float* data = nullptr;  /* 3 floats per chunk */
+    int state_writes = 0;
+    float last_state = 0.0f;
 };
 
 static int float_get_output(void* p, uint32_t, void* out, uint64_t capacity,
@@ -417,6 +466,15 @@ static int float_get_output(void* p, uint32_t, void* out, uint64_t capacity,
     if (capacity < kBytes) return CAP_ERR_ARG;
     auto* probe = static_cast<FloatProbe*>(p);
     std::memcpy(out, probe->data, kBytes);
+    return CAP_OK;
+}
+
+static int float_set_input(void* p, uint32_t port, const void* data,
+                           uint64_t bytes, int) {
+    if (port != 1 || !data || bytes != sizeof(float)) return CAP_ERR_ARG;
+    auto* probe = static_cast<FloatProbe*>(p);
+    std::memcpy(&probe->last_state, data, sizeof(float));
+    ++probe->state_writes;
     return CAP_OK;
 }
 
@@ -578,6 +636,7 @@ static void test_prepare_projected_state() {
     Fixture fx(true);
     FloatProbe probe;
     fx.model.self = &probe;
+    fx.model.set_input = float_set_input;
     fx.model.get_output = float_get_output;
     nexus::StageDagRunner runner(fx.ctx, &fx.model);
     prime_context(runner);
@@ -601,8 +660,13 @@ static void test_prepare_projected_state() {
           "projected_state requires delta actions");
     bad = cfg;
     bad.state_input_port = 1;
-    CHECK(nexus::ActionChunkMode::validate(bad) == CAP_ERR_ARG,
-          "SWAP state transport is not implemented yet and is rejected");
+    CHECK(nexus::ActionChunkMode::validate(bad) == CAP_OK &&
+              nexus::ActionChunkMode::validate_model_ports(&runner, bad) ==
+                  CAP_ERR_ARG,
+          "projected state rejects a non-state producer port at setup");
+    cfg.state_input_port = 2;
+    CHECK(nexus::ActionChunkMode::validate_model_ports(&runner, cfg) == CAP_OK,
+          "projected state accepts a matching STATE/F32/STAGED port");
 
     nexus::ActionChunkMode mode(&runner, cfg);
     CHECK(mode.begin_request() == CAP_ERR_ARG,
@@ -619,8 +683,9 @@ static void test_prepare_projected_state() {
     CHECK(mode.set_state(measured0, 1) == CAP_OK &&
               mode.begin_request() == CAP_OK &&
               mode.projected_state(proj, 1, &dims) == CAP_OK &&
-              dims == 1 && proj[0] == 10.0f && mode.projected_count() == 0,
-          "first projection is the measured state (no chunk, k = 0)");
+              dims == 1 && proj[0] == 10.0f && mode.projected_count() == 0 &&
+              probe.state_writes == 1 && probe.last_state == 10.0f,
+          "first projection is staged into the producer state port");
     CHECK(mode.commit_request() == CAP_OK &&
               mode.poll() == nexus::ActionChunkState::kReady &&
               mode.active_index() == 0,
@@ -636,8 +701,9 @@ static void test_prepare_projected_state() {
     CHECK(mode.set_state(measured1, 1) == CAP_OK &&
               mode.begin_request() == CAP_OK &&
               mode.projected_state(proj, 1, &dims) == CAP_OK &&
-              proj[0] == 25.0f && mode.projected_count() == 2,
-          "projection integrates the next k deltas of the executing chunk");
+              proj[0] == 25.0f && mode.projected_count() == 2 &&
+              probe.state_writes == 2 && probe.last_state == 25.0f,
+          "projection integrates deltas and stages the producer input");
     /* d == k: fire at step 1, start = 3, land at step 3. */
     CHECK(mode.commit_request() == CAP_OK &&
               mode.advance_step() == CAP_OK && mode.advance_step() == CAP_OK,
@@ -649,6 +715,47 @@ static void test_prepare_projected_state() {
     CHECK(mode.next_action(&out, sizeof(out), &written) ==
                   nexus::ActionChunkState::kReady && out == 10.0f,
           "projected chunk serves from index 0");
+}
+
+static void test_projected_state_preserves_unmapped_dimension() {
+    Fixture fx(true);
+    FloatProbe probe;
+    fx.model.self = &probe;
+    fx.model.set_input = float_set_input;
+    fx.model.get_output = float_get_output;
+    nexus::StageDagRunner runner(fx.ctx, &fx.model);
+    prime_context(runner);
+
+    nexus::ActionChunkConfig cfg = chunk_config();
+    cfg.prepare_policy = nexus::kActionChunkPrepareProjectedState;
+    cfg.scalar_dtype = nexus::kActionChunkDtypeF32;
+    cfg.action_representation = nexus::kActionChunkReprDeltaCumulative;
+    cfg.state_dim = 2;
+    cfg.lookahead_steps = 2;
+    cfg.execute_horizon = 0;
+    nexus::ActionChunkMode mode(&runner, cfg);
+    const uint32_t map[2] = {0, UINT32_MAX};
+    CHECK(mode.set_state_action_indices(map, 2) == CAP_OK,
+          "state-action map accepts an unprojected state dimension");
+
+    const float measured0[2] = {10.0f, 99.0f};
+    const float deltas[3] = {1.0f, 2.0f, 3.0f};
+    probe.data = deltas;
+    g_event_pending = 0;
+    CHECK(mode.set_state(measured0, 2) == CAP_OK &&
+              mode.request() == CAP_OK &&
+              mode.poll() == nexus::ActionChunkState::kReady,
+          "projection fixture seats the first chunk");
+
+    const float measured1[2] = {20.0f, 88.0f};
+    float projected[2] = {};
+    uint32_t written = 0;
+    CHECK(mode.set_state(measured1, 2) == CAP_OK &&
+              mode.begin_request() == CAP_OK &&
+              mode.projected_state(projected, 2, &written) == CAP_OK &&
+              written == 2 && projected[0] == 23.0f &&
+              projected[1] == 88.0f,
+          "projection integrates mapped deltas and preserves unmapped state");
 }
 
 static void test_projected_seating_late_and_wait() {
@@ -1053,6 +1160,7 @@ int main() {
     test_consume_switch_state();
     test_consume_temporal_fusion();
     test_prepare_projected_state();
+    test_projected_state_preserves_unmapped_dimension();
     test_projected_seating_late_and_wait();
     test_prepare_prev_chunk_prefix();
     test_composed_projected_fusion();

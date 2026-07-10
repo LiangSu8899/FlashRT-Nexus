@@ -18,10 +18,10 @@
  * fire is never cancelled and a late chunk is still accepted (and counted).
  *
  * The request verb is two-phase: begin_request() runs the prepare step (state
- * snapshot; later: policy port writes) and is idempotent; commit_request()
- * fires. request() is both, and commit_request() without begin_request()
- * begins implicitly — hosts that must inject staged inputs between the two
- * call them separately.
+ * snapshot and any configured producer-port write) and is idempotent;
+ * commit_request() fires. request() is both, and commit_request() without
+ * begin_request() begins implicitly — hosts that must inject staged inputs
+ * between the two call them separately.
  *
  * Determinism contract: no wall clock, no RNG; identical verb/input sequences
  * produce identical outputs, states, and counters.
@@ -44,9 +44,9 @@ enum class ActionChunkState {
     kError,
 };
 
-/* Policy slots. Only the defaults are implemented so far; every other value
- * is rejected by validate(). The slots are orthogonal: prepare acts before a
- * fire (model-input side), consume acts on a ready chunk (output side). */
+/* Policy slots. Unsupported values and incompatible pairings are rejected by
+ * validate(). Prepare acts before a fire (model-input side); consume acts on
+ * a ready chunk (output side). */
 enum : uint8_t {
     kActionChunkPrepareNone = 0,
     kActionChunkPrepareProjectedState = 1,
@@ -102,7 +102,7 @@ struct ActionChunkConfig {
     uint32_t lookahead_steps = 0;
     /* Transport for the projected state, +1 encoded: 0 = host transport
      * (the embedder injects between begin_request and commit_request);
-     * N = producer input port N-1 (SWAP lane; not implemented yet). */
+     * N = producer STATE/F32/STAGED input port N-1. */
     uint32_t state_input_port = 0;
     /* prev_chunk_prefix: the producer's in-graph correction freezes the
      * first prefix_len rows of the new chunk to the previous raw chunk,
@@ -134,6 +134,8 @@ public:
     /* Reject configs the mode cannot honor (unknown enum values, policies
      * not implemented yet, candidates > 1). Fail at setup, never at tick. */
     static int validate(const ActionChunkConfig& config);
+    static int validate_model_ports(StageDagRunner* runner,
+                                    const ActionChunkConfig& config);
 
     ActionChunkMode(StageDagRunner* runner,
                     const ActionChunkConfig& config);
@@ -156,13 +158,13 @@ public:
     void reset();
 
     /* State feed for policies that need proprioception (validated finite;
-     * snapshotted at begin_request). set_state_action_indices maps state
-     * dims into wider action vectors and must be called before the first
-     * request. */
+     * snapshotted at begin_request). set_state_action_indices maps each state
+     * dim to an action column; UINT32_MAX preserves an unprojected state dim.
+     * The complete map must be set before the first request. */
     int set_state(const float* state, uint32_t dim);
     int set_state_action_indices(const uint32_t* indices, uint32_t n);
-    /* projected_state prepare: the value computed by the last
-     * begin_request, for host-transport injection. */
+    /* projected_state prepare: the value computed by the last begin_request.
+     * Hosts may read it when state_input_port selects host transport. */
     int projected_state(float* out, uint32_t capacity_dims,
                         uint32_t* written_dims) const;
     /* prev_chunk_prefix prepare: the re-indexed previous raw chunk staged
