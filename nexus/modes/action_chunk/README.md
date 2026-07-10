@@ -124,7 +124,7 @@ declared device window (`StageDagRunner::read_output`).
   the injected state), `..._prefix` (staged bytes vs independent
   recompute + chunk vs baseline), `..._composed` (all four seams), and
   `gate_pi05_native_projected_port` (native STATE/STAGED port vs manual
-  staging, bit-exact actions).
+  staging, bit-exact actions, 1,000 hot prepares with an explicit p99 gate).
 
 Runnable assembly:
 [`examples/pi05_action_chunk`](../../../examples/pi05_action_chunk/)

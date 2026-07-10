@@ -237,4 +237,6 @@ python tests/gate_pi05_native_embedded.py \
 The direct projected-state port lane is gated by
 `tests/gate_pi05_native_projected_port.py`. It uses the native SM120 producer,
 checks the 8-D state/7-D action map against an independent projection, and
-requires the resulting actions to be bit-exact with manual state staging.
+requires the resulting actions to be bit-exact with manual state staging. It
+also runs 1,000 projected-state port prepares and enforces a one-millisecond
+p99 limit including the Nexus C ABI call.
