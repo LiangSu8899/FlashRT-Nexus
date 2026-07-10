@@ -7,6 +7,7 @@ import argparse
 import ctypes
 import json
 from pathlib import Path
+import time
 
 import numpy as np
 
@@ -39,7 +40,11 @@ def main() -> int:
     parser.add_argument("--flashrt-lib", type=Path, required=True)
     parser.add_argument("--nexus-lib", type=Path, required=True)
     parser.add_argument("--lookahead", type=int, default=3)
+    parser.add_argument("--hot-iters", type=int, default=1000)
+    parser.add_argument("--hot-p99-us", type=float, default=1000.0)
     args = parser.parse_args()
+    if args.hot_iters <= 0 or args.hot_p99_us <= 0:
+        parser.error("--hot-iters and --hot-p99-us must be positive")
     for name in ("checkpoint", "tokenizer", "flashrt_lib", "nexus_lib"):
         path = getattr(args, name).resolve()
         if not path.exists():
@@ -233,12 +238,44 @@ def main() -> int:
                 f"{np.max(np.abs(port_lane_actions - baseline_actions))}"
             )
 
+        hot_latencies = []
+        hot_state = measured1.copy()
+        for iteration in range(args.hot_iters + 20):
+            action_chunk.reset(mode)
+            hot_state[:] = np.sin(
+                np.arange(8, dtype=np.float32) + iteration * 0.03125
+            )
+            check(action_chunk.set_state(
+                mode,
+                hot_state.ctypes.data_as(ctypes.POINTER(ctypes.c_float)), 8
+            ), "set hot state")
+            begin_ns = time.perf_counter_ns()
+            check(action_chunk.begin_request(mode), "prepare hot state")
+            elapsed_us = (time.perf_counter_ns() - begin_ns) / 1000.0
+            if iteration >= 20:
+                hot_latencies.append(elapsed_us)
+        hot_latencies.sort()
+        p50_us = hot_latencies[len(hot_latencies) // 2]
+        p99_us = hot_latencies[
+            (len(hot_latencies) * 99 + 99) // 100 - 1
+        ]
+        max_us = hot_latencies[-1]
+        if p99_us > args.hot_p99_us:
+            raise RuntimeError(
+                f"port-lane hot p99 {p99_us:.3f} us exceeds "
+                f"{args.hot_p99_us:.3f} us"
+            )
+
         print("\n===== NATIVE PROJECTED-STATE PORT GATE =====")
         print(f"fingerprint       : 0x{nexus.cap_model_fingerprint(model):016x}")
         print(f"state/action dims : 8 / 7 (dimension 7 preserved)")
         print(f"lookahead         : {args.lookahead}")
         print(f"projection <=1ulp: {projection_ok}")
         print(f"port == baseline  : {action_exact}")
+        print(
+            f"hot begin_request : n={args.hot_iters} p50/p99/max="
+            f"{p50_us:.3f}/{p99_us:.3f}/{max_us:.3f} us"
+        )
         print("PASS - projected state stages through the native model port")
         return 0
     finally:
