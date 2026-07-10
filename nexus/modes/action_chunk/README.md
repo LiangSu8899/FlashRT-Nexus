@@ -125,6 +125,9 @@ declared device window (`StageDagRunner::read_output`).
   recompute + chunk vs baseline), `..._composed` (all four seams), and
   `gate_pi05_native_projected_port` (native STATE/STAGED port vs manual
   staging, bit-exact actions, 1,000 hot prepares with an explicit p99 gate).
+  The host-transport projected gate takes `--oracle-dir` (or
+  `FRT_ORACLE_DIR`) pointing at the independent runtime containing
+  `rtc.py` and `vlash.py`.
 
 Runnable assembly:
 [`examples/pi05_action_chunk`](../../../examples/pi05_action_chunk/)

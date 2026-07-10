@@ -34,16 +34,24 @@ from nexus_action_chunk_abi import (  # noqa: E402
 FLASHRT_DIR = os.environ.get("FLASHRT_DIR")
 if not FLASHRT_DIR:
     raise SystemExit("Set FLASHRT_DIR=<path to the FlashRT repo root>")
+FLASHRT_BUILD_DIR = os.environ.get("FLASHRT_BUILD_DIR")
 NEXUS_LIB = os.environ.get(
     "NEXUS_LIB", os.path.join("build", "libcapsule_nexus_flashrt.so"))
 PI05_LIB = os.environ.get(
-    "PI05_LIB", os.path.join(FLASHRT_DIR, "cpp/build-container",
-                             "libflashrt_cpp_pi05_c.so"))
+    "PI05_LIB", os.path.join(
+        FLASHRT_BUILD_DIR or os.path.join(FLASHRT_DIR, "cpp/build-container"),
+        "libflashrt_cpp_pi05_c.so"))
 
 for sub in ("", "exec/build-container", "runtime/build-container",
             "exec/build", "runtime/build"):
     p = os.path.join(FLASHRT_DIR, sub)
     if p not in sys.path:
+        sys.path.insert(0, p)
+if FLASHRT_BUILD_DIR:
+    for sub in ("exec", "runtime"):
+        p = os.path.join(FLASHRT_BUILD_DIR, sub)
+        if p in sys.path:
+            sys.path.remove(p)
         sys.path.insert(0, p)
 
 import flash_rt  # noqa: E402
