@@ -94,6 +94,8 @@ extern "C" int nexus_action_chunk_create(
     if (!r) return CAP_ERR_ARG;
     nexus::ActionChunkConfig cfg = convert(config);
     rc = nexus::ActionChunkMode::validate(cfg);
+    if (rc == CAP_OK)
+        rc = nexus::ActionChunkMode::validate_model_ports(r, cfg);
     if (rc != CAP_OK) return rc;
     auto* h = new (std::nothrow) nexus_action_chunk_s(r, cfg);
     if (!h) return CAP_ERR_NOMEM;
