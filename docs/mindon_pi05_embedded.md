@@ -153,6 +153,21 @@ Lane B/C behavior:
   prompt buffers;
 - Nexus adoption and embedded sessions stay unchanged.
 
+For action-chunk `projected_state`, Mindon may set `state_input_port` to the
+`+1`-encoded adopted state-port index. The mode accepts only a rank-1
+`STATE/F32/STAGED` input whose shape equals `state_dim`, computes the projected
+value in `begin_request`, and stages it with the generic model-runtime verb
+before `commit_request` fires. With `state_input_port = 0`, Mindon can instead
+read `nexus_action_chunk_projected_state` and perform host transport between
+the two verbs. In both lanes FlashRT owns Pi0.5 formatting and state semantics;
+Nexus owns only the configured action-chunk mechanism.
+
+The state/action dimensions need not match. Before the first request, provide
+one state-to-action index per state dimension with
+`nexus_action_chunk_set_state_action_indices`; use `UINT32_MAX` for state
+dimensions that must pass through unchanged. For LIBERO's native 8-D state and
+7-D action, the direct map is `[0, 1, 2, 3, 4, 5, 6, UINT32_MAX]`.
+
 ## Capsules
 
 Capsules snapshot the producer-declared regions in contractual order. The
@@ -198,6 +213,8 @@ Boundary rules:
 - `nexus_embedded_step` can run Lane A for a fixed prompt.
 - Snapshot -> restore -> continue works for the declared regions.
 - Native-v2 adoption exposes prompt/state ports without a Nexus core change.
+- Projected-state action chunking accepts the adopted state port at create and
+  rejects wrong modality, dtype, update class, rank, or shape before a tick.
 - Any transport adapter proves it only maps protocol payloads to declared
   ports and session verbs.
 
@@ -216,3 +233,8 @@ python tests/gate_pi05_native_embedded.py \
   --nexus-lib <libcapsule_nexus_flashrt.so> \
   --iters 1000
 ```
+
+The direct projected-state port lane is gated by
+`tests/gate_pi05_native_projected_port.py`. It uses the native SM120 producer,
+checks the 8-D state/7-D action map against an independent projection, and
+requires the resulting actions to be bit-exact with manual state staging.

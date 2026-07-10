@@ -15,8 +15,9 @@ no recapture); commit_request fires. Checks:
   3. Seating: landing at d == k consumes from index 0; landing at d > k
      skips the stale prefix.
 
-Host transport is the gate-grade path; the SWAP state-port lane lands with
-the producer-side state port.
+This gate retains the Python-producer host-transport lane. The native C++
+producer's direct STATE/STAGED lane is gated separately by
+gate_pi05_native_projected_port.py.
 """
 
 from __future__ import annotations

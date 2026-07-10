@@ -7,6 +7,15 @@
 
 namespace nexus {
 
+namespace {
+
+constexpr uint32_t kStateModality = 3;
+constexpr uint32_t kF32Dtype = 1;
+constexpr uint32_t kInputDirection = 0;
+constexpr uint32_t kStagedUpdate = 1;
+
+}  // namespace
+
 int ActionChunkMode::config_from_output_port(
         StageDagRunner* runner, uint64_t action_stage, uint32_t output_port,
         uint32_t scalar_bytes, uint32_t ring_slots, uint32_t execute_horizon,
@@ -95,9 +104,8 @@ int ActionChunkMode::validate(const ActionChunkConfig& config) {
             return CAP_ERR_ARG;
         if (config.action_representation != kActionChunkReprDeltaCumulative)
             return CAP_ERR_ARG;
-        /* +1 encoded; only host transport (0) is implemented. The SWAP lane
-         * lands with the first producer that declares a numeric state port. */
-        if (config.state_input_port != 0) return CAP_ERR_ARG;
+    } else if (config.state_input_port != 0) {
+        return CAP_ERR_ARG;
     }
     if (config.prepare_policy == kActionChunkPreparePrevChunkPrefix) {
         /* The in-graph correction owns the seam; consumption pairs with the
@@ -117,9 +125,33 @@ int ActionChunkMode::validate(const ActionChunkConfig& config) {
     return CAP_OK;
 }
 
+int ActionChunkMode::validate_model_ports(
+        StageDagRunner* runner, const ActionChunkConfig& config) {
+    if (!config.state_input_port) return CAP_OK;
+    if (!runner || !runner->ok()) return CAP_ERR_ARG;
+    cap_model_runtime* model = runner->model();
+    const uint32_t index = config.state_input_port - 1;
+    if (!model || !model->set_input || index >= model->n_ports)
+        return CAP_ERR_ARG;
+    const cap_model_port& port = model->ports[index];
+    if (port.modality != kStateModality || port.dtype != kF32Dtype ||
+        port.direction != kInputDirection || port.update != kStagedUpdate ||
+        !port.shape || port.rank != 1 || port.shape[0] <= 0 ||
+        static_cast<uint64_t>(port.shape[0]) != config.state_dim) {
+        return CAP_ERR_ARG;
+    }
+    return CAP_OK;
+}
+
 ActionChunkMode::ActionChunkMode(
         StageDagRunner* runner, const ActionChunkConfig& config)
     : runner_(runner), config_(config) {
+    const int port_validation = validate_model_ports(runner_, config_);
+    if (port_validation != CAP_OK) {
+        last_error_ = port_validation;
+        runner_ = nullptr;
+        return;
+    }
     if (config_.ring_slots == 0) config_.ring_slots = 1;
     if (config_.output_port != UINT32_MAX &&
         config_.chunk_length && config_.action_bytes) {
@@ -178,6 +210,16 @@ int ActionChunkMode::begin_request() {
     if (config_.prepare_policy == kActionChunkPrepareProjectedState) {
         int rc = prepare_projected();
         if (rc != CAP_OK) return rc;
+        if (config_.state_input_port) {
+            cap_model_runtime* model = runner_->model();
+            rc = cap_model_set_input(
+                model, config_.state_input_port - 1, projected_.data(),
+                static_cast<uint64_t>(projected_.size()) * sizeof(float), -1);
+            if (rc != CAP_OK) {
+                last_error_ = rc;
+                return rc;
+            }
+        }
     }
     if (config_.prepare_policy == kActionChunkPreparePrevChunkPrefix) {
         int rc = prepare_prev_chunk();
@@ -457,10 +499,18 @@ int ActionChunkMode::set_state(const float* state, uint32_t dim) {
 int ActionChunkMode::set_state_action_indices(const uint32_t* indices,
                                               uint32_t n) {
     if (requested_once_) return CAP_ERR_ARG;
-    if (!indices || !n) return CAP_ERR_ARG;
-    for (uint32_t i = 0; i < n; ++i)
+    if (!indices || !n || n != config_.state_dim) return CAP_ERR_ARG;
+    const uint32_t action_dim = config_.action_bytes / sizeof(float);
+    bool has_mapped_dimension = false;
+    for (uint32_t i = 0; i < n; ++i) {
+        if (indices[i] == UINT32_MAX) continue;
+        if (indices[i] >= action_dim) return CAP_ERR_ARG;
+        has_mapped_dimension = true;
         for (uint32_t j = i + 1; j < n; ++j)
-            if (indices[i] == indices[j]) return CAP_ERR_ARG;
+            if (indices[j] != UINT32_MAX && indices[i] == indices[j])
+                return CAP_ERR_ARG;
+    }
+    if (!has_mapped_dimension) return CAP_ERR_ARG;
     state_action_indices_.assign(indices, indices + n);
     return CAP_OK;
 }
@@ -522,7 +572,7 @@ int ActionChunkMode::state_index(const unsigned char* chunk,
     } else {
         if (state_action_indices_.size() != state_dim) return CAP_ERR_ARG;
         for (uint32_t idx : state_action_indices_)
-            if (idx >= action_dim) return CAP_ERR_ARG;
+            if (idx != UINT32_MAX && idx >= action_dim) return CAP_ERR_ARG;
     }
     std::vector<double>& cum = const_cast<std::vector<double>&>(state_cum_);
     std::fill(cum.begin(), cum.end(), 0.0);
@@ -535,6 +585,7 @@ int ActionChunkMode::state_index(const unsigned char* chunk,
         for (uint32_t k = 0; k < state_dim; ++k) {
             const uint32_t col =
                 state_action_indices_.empty() ? k : state_action_indices_[k];
+            if (col == UINT32_MAX) continue;
             const double a = static_cast<double>(row[col]);
             double estimate;
             switch (config_.action_representation) {
@@ -660,7 +711,7 @@ int ActionChunkMode::prepare_projected() {
     } else {
         if (state_action_indices_.size() != state_dim) return CAP_ERR_ARG;
         for (uint32_t idx : state_action_indices_)
-            if (idx >= action_dim) return CAP_ERR_ARG;
+            if (idx != UINT32_MAX && idx >= action_dim) return CAP_ERR_ARG;
     }
     uint32_t count = 0;
     std::fill(state_cum_.begin(), state_cum_.end(), 0.0);
@@ -680,6 +731,7 @@ int ActionChunkMode::prepare_projected() {
             for (uint32_t k = 0; k < state_dim; ++k) {
                 const uint32_t col = state_action_indices_.empty()
                                          ? k : state_action_indices_[k];
+                if (col == UINT32_MAX) continue;
                 state_cum_[k] += static_cast<double>(row[col]);
             }
         }
