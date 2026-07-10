@@ -10,7 +10,7 @@ names, or inspect Pi0.5 internal buffers.
 
 ## Supported Lanes
 
-### Lane A: Current Contract
+### Lane A: Python Setup Producer
 
 Lane A removes Python from the hot loop while keeping Python as the setup
 producer:
@@ -35,18 +35,40 @@ The current Pi0.5 native face exports:
 Prompt is setup-time in Lane A. The current producer does not export hot
 `prompt` or `state` ports.
 
-### Lane B: After FlashRT Prompt/State Staging
+### Lane B: Adopted Prompt/State Staging
 
 When FlashRT exports real `prompt: TEXT/STAGED` and `state: STATE/STAGED`
 ports, Nexus adoption automatically exposes them as `cap_model_port` entries.
 Mindon sends those inputs with the same embedded/session APIs. Nexus core does
 not change.
 
-### Lane C: Future Native Producer
+### Lane C: Native SM120 Producer
 
-When FlashRT implements `frt_model_runtime_open_v1(config_json, &out)`, the
-Mindon host adopts the returned `frt_model_runtime_v1*` exactly as in Lane A.
-The producer language changes; Nexus and the control loop shape do not.
+FlashRT now implements `frt_model_runtime_open_v1(config_json, &out)` for the
+SM120 FA2+SentencePiece build. The Mindon host adopts the returned
+`frt_model_runtime_v1*` exactly as in Lane A. The producer language changes;
+Nexus and the control loop shape do not. Native-v2 declares `prompt` and
+`state` as real STAGED inputs, so Lane C also includes the Lane B hot updates.
+
+Setup remains application-owned:
+
+```c
+frt_model_runtime_v1* producer = NULL;
+frt_model_runtime_open_v1(config_json, &producer);
+cap_model_runtime* adopted = NULL;
+flashrt_adopt_model_runtime(producer, &adopted);
+producer->release(producer->owner);  /* adoption retained it */
+```
+
+The config fixes checkpoint/tokenizer paths, prompt capacity, state/view/chunk
+dimensions, diffusion steps, and pooling before capture. A non-SM120 device or
+a build without native FA2/SentencePiece returns unsupported rather than a
+partially usable model.
+
+Build the Nexus FlashRT backend against the same `libflashrt_exec.so` used by
+the native producer. Loading different exec builds with the same SONAME into
+one process is not supported: graph/buffer handles belong to one exec
+implementation and must not cross a second copy.
 
 ## Embedded Session Flow
 
@@ -118,13 +140,13 @@ separate producer-declared raw port such as `actions_raw`.
 Pi0.5 state is producer-owned semantics. It is rendered into prompt tokens by
 FlashRT, not Nexus.
 
-Current Lane A behavior:
+Lane A behavior:
 
 - prompt and state are not hot ports;
 - changing prompt/state requires a producer-side setup refresh;
 - Nexus can still snapshot/restore the declared runtime regions.
 
-Future Lane B behavior:
+Lane B/C behavior:
 
 - Mindon writes `prompt` and `state` as ordinary STAGED ports;
 - the FlashRT producer formats, tokenizes, embeds, and writes graph-safe
@@ -137,6 +159,10 @@ Capsules snapshot the producer-declared regions in contractual order. The
 capsule fingerprint is the producer fingerprint. A restore failure caused by a
 fingerprint mismatch is the correct response to a different deployment
 identity.
+
+The current native-v2 face declares only `rollout_boundary`. Prompt embedding,
+attention lengths, RoPE, and CPU prompt/state caches are rebuildable producer
+workspace, not a partially restorable capsule region.
 
 Mindon should use:
 
@@ -171,7 +197,22 @@ Boundary rules:
 - `flashrt_adopt_model_runtime` succeeds and exposes the expected ports.
 - `nexus_embedded_step` can run Lane A for a fixed prompt.
 - Snapshot -> restore -> continue works for the declared regions.
-- When FlashRT adds prompt/state ports, adoption shows two additional ports
-  without a Nexus core change.
+- Native-v2 adoption exposes prompt/state ports without a Nexus core change.
 - Any transport adapter proves it only maps protocol payloads to declared
   ports and session verbs.
+
+The native Lane C gate is `tests/gate_pi05_native_embedded.py`. It loads the
+native producer, drops the caller reference after adoption, drives all six
+declared ports through an embedded session, checks deterministic/dynamic noise,
+and verifies snapshot/restore for the declared rollout region. This gate must
+pass without a Pi0.5-specific diff in Nexus core, backend, scheduler, or mode
+code.
+
+```
+python tests/gate_pi05_native_embedded.py \
+  --checkpoint <pi05-checkpoint> \
+  --tokenizer <tokenizer.model> \
+  --flashrt-lib <libflashrt_cpp_pi05_c.so> \
+  --nexus-lib <libcapsule_nexus_flashrt.so> \
+  --iters 1000
+```
