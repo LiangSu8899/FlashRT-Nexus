@@ -80,18 +80,18 @@ int main() {
     const int64_t flat_shape[1] = {(int64_t)N};
     cap_model_port ports[3]{};
     ports[0].name = "obs";
-    ports[0].direction = 0;
-    ports[0].update = 0;  /* SWAP */
+    ports[0].direction = CAP_MODEL_PORT_IN;
+    ports[0].update = CAP_MODEL_PORT_SWAP;
     ports[0].shape = flat_shape;
     ports[0].rank = 1;
     ports[0].buffer = obs;
     ports[0].bytes = N;
     ports[1].name = "cmd";
-    ports[1].direction = 0;
-    ports[1].update = 1;  /* STAGED */
+    ports[1].direction = CAP_MODEL_PORT_IN;
+    ports[1].update = CAP_MODEL_PORT_STAGED;
     ports[2].name = "actions";
-    ports[2].direction = 1;
-    ports[2].update = 1;
+    ports[2].direction = CAP_MODEL_PORT_OUT;
+    ports[2].update = CAP_MODEL_PORT_STAGED;
     ports[2].shape = flat_shape;
     ports[2].rank = 1;
 
