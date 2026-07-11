@@ -140,8 +140,8 @@ int main() {
     const int64_t action_shape[2] = {3, 1};
     cap_model_port model_ports[1]{};
     model_ports[0].name = "actions";
-    model_ports[0].direction = 1;
-    model_ports[0].update = 1;
+    model_ports[0].direction = CAP_MODEL_PORT_OUT;
+    model_ports[0].update = CAP_MODEL_PORT_STAGED;
     model_ports[0].shape = action_shape;
     model_ports[0].rank = 2;
     model.ports = model_ports;

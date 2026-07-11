@@ -132,15 +132,15 @@ struct Fixture {
         sched_stages[1] = {g1, 0, 1, 0, 1, 1, CAP_EVERY};
         schedule = {sched_stages, 2, deps, 1};
         ports[0].name = "actions";
-        ports[0].direction = 1;
-        ports[0].update = 1;
+        ports[0].direction = CAP_MODEL_PORT_OUT;
+        ports[0].update = CAP_MODEL_PORT_STAGED;
         ports[0].shape = shape;
         ports[0].rank = 2;
         ports[1].name = "state";
-        ports[1].modality = 3;
-        ports[1].dtype = 1;
-        ports[1].direction = 0;
-        ports[1].update = 1;
+        ports[1].modality = CAP_MODEL_MOD_STATE;
+        ports[1].dtype = CAP_MODEL_DTYPE_F32;
+        ports[1].direction = CAP_MODEL_PORT_IN;
+        ports[1].update = CAP_MODEL_PORT_STAGED;
         ports[1].shape = state_shape;
         ports[1].rank = 1;
         model.backend = &be;
@@ -667,26 +667,26 @@ static void test_prepare_projected_state() {
     cfg.state_input_port = 2;
     CHECK(nexus::ActionChunkMode::validate_model_ports(&runner, cfg) == CAP_OK,
           "projected state accepts a matching STATE/F32/STAGED port");
-    fx.ports[1].modality = 0;
+    fx.ports[1].modality = CAP_MODEL_MOD_TENSOR;
     CHECK(nexus::ActionChunkMode::validate_model_ports(&runner, cfg) ==
               CAP_ERR_ARG,
           "projected state rejects the wrong port modality");
-    fx.ports[1].modality = 3;
-    fx.ports[1].dtype = 2;
+    fx.ports[1].modality = CAP_MODEL_MOD_STATE;
+    fx.ports[1].dtype = CAP_MODEL_DTYPE_F16;
     CHECK(nexus::ActionChunkMode::validate_model_ports(&runner, cfg) ==
               CAP_ERR_ARG,
           "projected state rejects the wrong port dtype");
-    fx.ports[1].dtype = 1;
-    fx.ports[1].direction = 1;
+    fx.ports[1].dtype = CAP_MODEL_DTYPE_F32;
+    fx.ports[1].direction = CAP_MODEL_PORT_OUT;
     CHECK(nexus::ActionChunkMode::validate_model_ports(&runner, cfg) ==
               CAP_ERR_ARG,
           "projected state rejects an output port");
-    fx.ports[1].direction = 0;
-    fx.ports[1].update = 0;
+    fx.ports[1].direction = CAP_MODEL_PORT_IN;
+    fx.ports[1].update = CAP_MODEL_PORT_SWAP;
     CHECK(nexus::ActionChunkMode::validate_model_ports(&runner, cfg) ==
               CAP_ERR_ARG,
           "projected state rejects a non-STAGED port");
-    fx.ports[1].update = 1;
+    fx.ports[1].update = CAP_MODEL_PORT_STAGED;
     fx.ports[1].rank = 2;
     CHECK(nexus::ActionChunkMode::validate_model_ports(&runner, cfg) ==
               CAP_ERR_ARG,
@@ -907,8 +907,8 @@ static void test_prepare_prev_chunk_prefix() {
     cap_model_port ports2[2]{};
     ports2[0] = fx.ports[0];
     ports2[1].name = "actions_raw";
-    ports2[1].direction = 1;
-    ports2[1].update = 0;                 /* SWAP: window read, no verb */
+    ports2[1].direction = CAP_MODEL_PORT_OUT;
+    ports2[1].update = CAP_MODEL_PORT_SWAP; /* window read, no verb */
     ports2[1].shape = raw_shape;
     ports2[1].rank = 2;
     ports2[1].buffer = raw_buf;

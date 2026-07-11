@@ -32,14 +32,47 @@
 extern "C" {
 #endif
 
+/* Producer-v1 schema values mirrored in capsule names. These are routing
+ * constants for L2 hosts/modes; capsule core does not interpret them. */
+enum cap_model_modality {
+    CAP_MODEL_MOD_TENSOR = 0,
+    CAP_MODEL_MOD_IMAGE = 1,
+    CAP_MODEL_MOD_TEXT = 2,
+    CAP_MODEL_MOD_STATE = 3,
+    CAP_MODEL_MOD_ACTION = 4,
+    CAP_MODEL_MOD_AUDIO = 5,
+    CAP_MODEL_MOD_DEPTH = 6,
+    CAP_MODEL_MOD_FORCE = 7
+};
+
+enum cap_model_dtype {
+    CAP_MODEL_DTYPE_U8 = 0,
+    CAP_MODEL_DTYPE_F32 = 1,
+    CAP_MODEL_DTYPE_F16 = 2,
+    CAP_MODEL_DTYPE_BF16 = 3,
+    CAP_MODEL_DTYPE_I32 = 4,
+    CAP_MODEL_DTYPE_I64 = 5
+};
+
+enum cap_model_port_direction {
+    CAP_MODEL_PORT_IN = 0,
+    CAP_MODEL_PORT_OUT = 1
+};
+
+enum cap_model_port_update {
+    CAP_MODEL_PORT_SWAP = 0,
+    CAP_MODEL_PORT_STAGED = 1,
+    CAP_MODEL_PORT_SETUP = 2
+};
+
 /* Modality / dtype / layout / direction / update values mirror the producer
  * ABI (append-only after v1). The core never interprets them; they are
  * host-side routing data. */
 typedef struct cap_model_port {
     const char* name;
     uint32_t modality, dtype, layout;
-    uint32_t direction;          /* 0 = in, 1 = out                        */
-    uint32_t update;             /* 0 = SWAP, 1 = STAGED, 2 = SETUP        */
+    uint32_t direction;          /* enum cap_model_port_direction          */
+    uint32_t update;             /* enum cap_model_port_update             */
     uint32_t required;
     const int64_t* shape; uint32_t rank;
     uint32_t cadence_hint_hz;

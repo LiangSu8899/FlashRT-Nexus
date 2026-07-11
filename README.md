@@ -123,6 +123,7 @@ tick.
 
 ## Documentation
 
+- [`docs/changes.md`](docs/changes.md): compatibility and migration notes.
 - [`docs/serve.md`](docs/serve.md): HTTP transport, Act API, manifest, demo deployment.
 - [`docs/embedded.md`](docs/embedded.md): no-HTTP Python entry for same-process loops.
 - [`docs/cpp_embedded.md`](docs/cpp_embedded.md): C/C++ session ABI for ROS2/shm/local control loops.
