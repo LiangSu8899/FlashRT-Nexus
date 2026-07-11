@@ -7,6 +7,10 @@ Its core is the **capsule** execution-state mechanism — a sovereign, zero-depe
 This document is the contract every change is held to. It is short on purpose: if a change needs a
 longer justification than the rules below, it is probably in the wrong layer.
 
+Use [`docs/pr_review_checklist.md`](docs/pr_review_checklist.md) for the
+review procedure and [`docs/model_runtime.md`](docs/model_runtime.md) for the
+producer/capsule boundary.
+
 ---
 
 ## 1. Layering — where code goes
@@ -95,6 +99,10 @@ a lower layer to satisfy a higher one, that field is policy and belongs higher u
       semantics, and the documented live-capture bit-exact boundary.
 - [ ] Builds and tests pass (§5); correctness is preserved (bit/token/cosine-exact where applicable).
 - [ ] Commit & file hygiene (§6).
+- [ ] Mirrored producer schema enums are compile-time asserted in the adapter;
+      capsule public headers still have no producer include.
+- [ ] Public docs and PR text use placeholders and contain no private paths,
+      host/container names, credentials, internal URLs, or environment dumps.
 
 ---
 

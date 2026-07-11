@@ -20,6 +20,20 @@ graphs/buffers wrapped, regions materialized in contractual order), wires SWAP
 port windows as capsule buffers, prepares the stage schedule, and pre-creates
 the events that make the tick allocation-free.
 
+## Backend boundary
+
+FlashRT supplies one exec implementation per linked process. Nexus does not
+turn that process-level ABI into a backend registry. Heterogeneous CUDA, CPU,
+llama.cpp, or future runtime instances enter through `cap_backend`: each is an
+instance vtable capable of buffer, graph or eager-call, event, copy, and sync
+mechanisms. The capsule and model-runtime layers remain unchanged.
+
+The capsule schema enum names mirror producer values for routing, but
+`host/include/capsule/model_runtime.h` does not include producer headers. The
+FlashRT adapter translation unit owns compile-time assertions for every
+mirrored modality, dtype, direction, and update value. Additive enum evolution
+must update both the mirror and those assertions in one adapter change.
+
 ## The struct (capsule types only)
 
 | field | meaning |
