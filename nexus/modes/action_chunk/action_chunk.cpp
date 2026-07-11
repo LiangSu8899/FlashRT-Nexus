@@ -7,15 +7,6 @@
 
 namespace nexus {
 
-namespace {
-
-constexpr uint32_t kStateModality = 3;
-constexpr uint32_t kF32Dtype = 1;
-constexpr uint32_t kInputDirection = 0;
-constexpr uint32_t kStagedUpdate = 1;
-
-}  // namespace
-
 int ActionChunkMode::config_from_output_port(
         StageDagRunner* runner, uint64_t action_stage, uint32_t output_port,
         uint32_t scalar_bytes, uint32_t ring_slots, uint32_t execute_horizon,
@@ -134,8 +125,10 @@ int ActionChunkMode::validate_model_ports(
     if (!model || !model->set_input || index >= model->n_ports)
         return CAP_ERR_ARG;
     const cap_model_port& port = model->ports[index];
-    if (port.modality != kStateModality || port.dtype != kF32Dtype ||
-        port.direction != kInputDirection || port.update != kStagedUpdate ||
+    if (port.modality != CAP_MODEL_MOD_STATE ||
+        port.dtype != CAP_MODEL_DTYPE_F32 ||
+        port.direction != CAP_MODEL_PORT_IN ||
+        port.update != CAP_MODEL_PORT_STAGED ||
         !port.shape || port.rank != 1 || port.shape[0] <= 0 ||
         static_cast<uint64_t>(port.shape[0]) != config.state_dim) {
         return CAP_ERR_ARG;

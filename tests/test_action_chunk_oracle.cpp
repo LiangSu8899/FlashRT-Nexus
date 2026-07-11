@@ -141,8 +141,8 @@ static int run_projection_vectors(const char* path) {
                                   static_cast<int64_t>(action_dim)};
         cap_model_port ports[1]{};
         ports[0].name = "actions";
-        ports[0].direction = 1;
-        ports[0].update = 1;
+        ports[0].direction = CAP_MODEL_PORT_OUT;
+        ports[0].update = CAP_MODEL_PORT_STAGED;
         ports[0].shape = shape;
         ports[0].rank = 2;
         VectorProbe probe;
@@ -288,8 +288,8 @@ int main() {
                                   static_cast<int64_t>(action_dim)};
         cap_model_port ports[1]{};
         ports[0].name = "actions";
-        ports[0].direction = 1;
-        ports[0].update = 1;
+        ports[0].direction = CAP_MODEL_PORT_OUT;
+        ports[0].update = CAP_MODEL_PORT_STAGED;
         ports[0].shape = shape;
         ports[0].rank = 2;
         VectorProbe probe;
