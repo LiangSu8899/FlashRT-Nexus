@@ -42,13 +42,14 @@ ports, Nexus adoption automatically exposes them as `cap_model_port` entries.
 Mindon sends those inputs with the same embedded/session APIs. Nexus core does
 not change.
 
-### Lane C: Native SM120 Producer
+### Lane C: Native C++ Producer
 
 FlashRT now implements `frt_model_runtime_open_v1(config_json, &out)` for the
-SM120 FA2+SentencePiece build. The Mindon host adopts the returned
-`frt_model_runtime_v1*` exactly as in Lane A. The producer language changes;
-Nexus and the control loop shape do not. Native-v2 declares `prompt` and
-`state` as real STAGED inputs, so Lane C also includes the Lane B hot updates.
+SM120 FA2+SentencePiece and SM110 Thor FP8 builds. The Mindon host adopts the
+returned `frt_model_runtime_v1*` exactly as in Lane A. The producer language,
+hardware, and internal math may change; Nexus and the control loop shape do
+not. Native-v2 declares `prompt` and `state` as real STAGED inputs, so Lane C
+also includes the Lane B hot updates.
 
 Setup remains application-owned:
 
@@ -60,9 +61,11 @@ flashrt_adopt_model_runtime(producer, &adopted);
 producer->release(producer->owner);  /* adoption retained it */
 ```
 
-The config fixes checkpoint/tokenizer paths, prompt capacity, state/view/chunk
-dimensions, diffusion steps, and pooling before capture. A non-SM120 device or
-a build without native FA2/SentencePiece returns unsupported rather than a
+The config fixes checkpoint/tokenizer identity, precision, calibration, prompt
+capacity, state/view/chunk dimensions, diffusion steps, pooling, and stage plan
+before capture. SM120 supports native BF16 and calibrated static FP8; SM110
+supports calibrated static FP8. An unsupported hardware/precision pair or a
+build missing its graph backend/SentencePiece returns unsupported rather than a
 partially usable model.
 
 Build the Nexus FlashRT backend against the same `libflashrt_exec.so` used by
@@ -134,6 +137,34 @@ fixed action chunk. Nexus does not hard-code action shape.
 The `actions` port is the logical robot action output after producer
 postprocess. If a deployment needs raw model action state, it must use a
 separate producer-declared raw port such as `actions_raw`.
+
+## Views, Chunk, and Stages
+
+`num_views`, `chunk`, denoise steps, and stage plan are setup-time producer
+configuration. They are not Nexus mode fields and cannot change after graph
+capture. Mindon validates the adopted descriptors once, then derives:
+
+- camera count and order from the producer's image contract;
+- output chunk length and action width from `actions.shape`;
+- schedulable graph boundaries from `stages[]` and `after[]`.
+
+Runtime `images` is a positional `frt_image_view[]` payload. For Pi0.5 the
+declared positions are the prefix of base, wrist, and right-wrist views;
+calibration's named-frame API is a separate producer setup contract.
+
+The native Pi0.5 graph catalog is `infer`, `context`, and `decode_only`.
+`stage_plan=full` publishes one stage backed by `infer`.
+`stage_plan=context_action` publishes stage 0 backed by `context` and stage 1
+backed by `decode_only`, with stage 1 depending on stage 0. Nexus consumes only
+those indices, graph handles, streams, and dependencies. It does not parse the
+plan name or infer model semantics from a graph name.
+
+Both current plans share one producer-owned hand-off buffer set. The split plan
+allows explicit fire/query/sync and lets inference run asynchronously relative
+to the robot loop, but it does not permit the next context stage to overwrite
+buffers while the prior action stage is still in flight. Cross-tick GPU overlap
+requires a future producer to declare and fingerprint double-buffered state;
+neither Nexus nor the host may assume it.
 
 ## Prompt and State
 
