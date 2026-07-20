@@ -66,7 +66,7 @@ extern "C" int flashrt_adopt_model_runtime(const frt_model_runtime_v1* model,
     if (!model || !out) return -1;
     *out = nullptr;
     if (model->abi_version != FRT_MODEL_RUNTIME_ABI_VERSION ||
-        model->struct_size < sizeof(frt_model_runtime_v1)) return -2;
+        model->struct_size < FRT_MODEL_RUNTIME_V1_BASE_SIZE) return -2;
     if (!model->exp || !model->retain || !model->release) return -1;
     if ((model->n_ports && !model->ports) ||
         (model->n_stages && !model->stages)) return -1;

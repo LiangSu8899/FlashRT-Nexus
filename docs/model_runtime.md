@@ -34,6 +34,12 @@ FlashRT adapter translation unit owns compile-time assertions for every
 mirrored modality, dtype, direction, and update value. Additive enum evolution
 must update both the mirror and those assertions in one adapter change.
 
+The adapter requires only `FRT_MODEL_RUNTIME_V1_BASE_SIZE`, the published v1
+prefix through `release`. It must not require the latest
+`sizeof(frt_model_runtime_v1)`; additive producer tails are ignored until a
+separately reviewed consumer explicitly probes them. A short prefix is rejected
+before Nexus retains the producer or adopts its export.
+
 ## The struct (capsule types only)
 
 | field | meaning |
