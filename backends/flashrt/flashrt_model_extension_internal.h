@@ -4,6 +4,8 @@
 #include "capsule/model_runtime.h"
 #include "flashrt/model_runtime.h"
 
+#include <cstring>
+
 struct flashrt_model_authority {
     const frt_generic_stage_plan_ext_v1* plan = nullptr;
     bool step_only = false;
@@ -49,6 +51,7 @@ inline int flashrt_model_query_authority(
     }
     if (query_rc != 0) {
         if (extension) return -1;
+        if (query_rc != -3) return -1;
         if (model->n_stages) return 0;
         if (!model->verbs.step) return -1;
         authority->step_only = true;
@@ -58,9 +61,10 @@ inline int flashrt_model_query_authority(
     if (model->n_stages) return -1;
     const auto* plan =
         static_cast<const frt_generic_stage_plan_ext_v1*>(extension);
-    if (plan->abi_version != FRT_GENERIC_STAGE_PLAN_ABI_VERSION ||
+    if (plan->abi_version < FRT_GENERIC_STAGE_PLAN_ABI_VERSION ||
         plan->struct_size < FRT_GENERIC_STAGE_PLAN_EXT_V1_SIZE ||
-        !plan->stages || !plan->n_stages || !plan->run_opaque)
+        !plan->stages || !plan->n_stages || !plan->run_opaque ||
+        !model->verbs.last_error)
         return -1;
     bool has_opaque = false;
     for (uint64_t i = 0; i < plan->n_stages; ++i) {
@@ -70,14 +74,21 @@ inline int flashrt_model_query_authority(
             (!allow_graph && stage.executor_kind !=
                               FRT_GENERIC_STAGE_OPAQUE) ||
             (stage.n_after && !stage.after)) return -1;
+        for (uint64_t previous = 0; previous < i; ++previous)
+            if (std::strcmp(plan->stages[previous].name, stage.name) == 0)
+                return -1;
         if (stage.executor_kind == FRT_GENERIC_STAGE_GRAPH) {
             if (!model->exp || stage.executor_ref >= model->exp->n_graphs)
                 return -1;
         } else {
             has_opaque = true;
         }
-        for (uint32_t k = 0; k < stage.n_after; ++k)
-            if (stage.after[k] >= i) return -1;
+        uint32_t previous = 0;
+        for (uint32_t k = 0; k < stage.n_after; ++k) {
+            if (stage.after[k] >= i || (k && stage.after[k] <= previous))
+                return -1;
+            previous = stage.after[k];
+        }
     }
     if (!has_opaque) return -1;
     authority->plan = plan;

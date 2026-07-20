@@ -20,6 +20,19 @@ graphs/buffers wrapped, regions materialized in contractual order), wires SWAP
 port windows as capsule buffers, prepares the stage schedule, and pre-creates
 the events that make the tick allocation-free.
 
+The adapter accepts exactly one execution authority:
+
+- a legacy stage table, where every stage is an adopted GRAPH;
+- a generic stage-plan extension containing at least one OPAQUE stage and
+  optionally GRAPH stages; or
+- no stage authority, where the base `step` verb is the whole-model fallback.
+
+Publishing both a legacy table and a generic plan is rejected. A pure generic
+GRAPH plan is also rejected; existing graph producers keep using the legacy
+table. Provider-only builds use `flashrt_adopt_model_runtime_abi`, which accepts
+metadata-only all-OPAQUE or step-only runtimes and rejects every graph, SWAP
+window, stream, buffer, and restorable region.
+
 ## Backend boundary
 
 FlashRT supplies one exec implementation per linked process. Nexus does not
@@ -64,8 +77,18 @@ cap_model_tick(c, m);                    /* whole DAG, allocation-free          
 cap_model_fire(c, m, stage_index);       /* one stage; overlap across streams   */
 ```
 
-`cap_model_tick` fires stages in declared order: cross-stream dependencies
-wait on the pre-created events, same-stream dependencies ride FIFO order.
+`cap_model_tick` executes stages in declared order. GRAPH-to-GRAPH
+cross-stream dependencies wait on pre-created events and same-stream
+dependencies ride FIFO order. OPAQUE is synchronous in the first protocol
+version: its callback is complete when it returns. A GRAPH predecessor is
+synchronized before an OPAQUE callback; an OPAQUE predecessor completes before
+a dependent GRAPH is enqueued. No async, cancellation, or pending state is
+implied.
+
+`cap_model_execute_stage` is the neutral per-stage entrypoint. It preserves
+`cap_fire` for GRAPH and invokes the producer callback for OPAQUE. The callback
+receives only the producer's opaque executor reference; Nexus does not inspect
+provider names, model names, or backend-private streams.
 Hosts that overlap, interrupt, or re-order fire stages themselves — the DAG
 is data, the loop is always yours.
 
@@ -152,6 +175,39 @@ Updating SWAP or STAGED ports **between ticks** never recaptures, never
 allocates, never rebinds graph pointers — replay output tracks buffer
 contents, round after round. Warm-phase shape-bucket capture goes through the
 producer's `prepare`, never inside a tick.
+
+The graph replay and STAGED IO contracts remain allocation-free. An OPAQUE
+provider callback is an ordinary synchronous host call and may allocate; it is
+not falsely described as CUDA graph replay.
+
+## Model state
+
+`cap_model_state_status` and the model-level snapshot/restore wrappers succeed
+only for an all-GRAPH runtime with declared regions. Mixed, all-OPAQUE, and
+step-only runtimes return `CAP_ERR_ARG`: Nexus cannot snapshot provider-private
+state that was not declared as FlashRT regions. Capsule lifecycle and scheduling
+policy remain in Nexus; FlashRT owns the declared region mechanism.
+
+## Producer DSO lifetime
+
+`flashrt_loaded_model_open` uses `RTLD_LOCAL` and resolves
+`frt_model_runtime_open_v1` on that exact handle. The returned loader owns the
+adopted model and keeps the producer DSO loaded while any runtime, extension,
+or callback pointer is reachable. `flashrt_loaded_model_close` closes the
+adopted runtime first and calls `dlclose` last.
+
+```c
+flashrt_loaded_model* loader = NULL;
+cap_model_runtime* model = NULL;
+int rc = flashrt_loaded_model_open("<provider-dso>", config_json,
+                                   &loader, &model);
+/* drive model */
+flashrt_loaded_model_close(loader);
+```
+
+Choose one build product: `capsule_model_flashrt_abi_loader` for CPU/provider
+only runtimes, or `capsule_model_flashrt_loader` for the graph-enabled superset.
+The provider-only product does not link CUDA or `libflashrt_exec`.
 
 ## Graph-cache mechanism vs policy
 

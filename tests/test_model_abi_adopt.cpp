@@ -161,6 +161,21 @@ int main() {
     CHECK(cap_model_get_output(model, 1, &output, sizeof(output), &written,
                                -1) == 0 && output == 23.0f,
           "staged output remains provider-owned");
+    const struct { int producer; int nexus; } status_cases[] = {
+        {-1, CAP_ERR_ARG}, {-3, CAP_ERR_ARG}, {-4, CAP_ERR_ARG},
+        {-7, CAP_ERR_ARG}, {-2, CAP_ERR_FORMAT}, {-5, CAP_ERR_NOMEM},
+        {-6, CAP_ERR_BACKEND}, {-99, CAP_ERR},
+    };
+    bool status_map_ok = true;
+    for (const auto& status : status_cases) {
+        fixture.state.callback_rc = status.producer;
+        status_map_ok &= cap_model_execute_stage(nullptr, model, 0) ==
+                         status.nexus;
+    }
+    fixture.state.callback_rc = 0;
+    CHECK(status_map_ok && std::strcmp(cap_model_last_error(model),
+                                       "fixture error") == 0,
+          "callback statuses map once while provider error text stays authoritative");
     nexus::StageDagRunner runner(nullptr, model);
     CHECK(runner.ok() && runner.run_once() == CAP_OK &&
               runner.query(0) == CAP_OK && runner.sync(1) == CAP_OK &&
@@ -234,6 +249,15 @@ int main() {
     bad.state.plan = &invalid_plan;
     CHECK(flashrt_adopt_model_runtime_abi(&bad.model, &rejected) == -4,
           "forward dependency is rejected");
+    bad.reset();
+    frt_generic_stage_desc_v1 no_error_stage{
+        "opaque", FRT_GENERIC_STAGE_OPAQUE, 0, 0, nullptr};
+    frt_generic_stage_plan_ext_v1 no_error_plan{
+        1, sizeof(no_error_plan), &no_error_stage, 1, &bad.state, run_opaque};
+    bad.state.plan = &no_error_plan;
+    bad.model.verbs.last_error = nullptr;
+    CHECK(flashrt_adopt_model_runtime_abi(&bad.model, &rejected) == -4,
+          "OPAQUE authority without base last_error is rejected");
 
     cap_model_stage opaque_stage{};
     opaque_stage.name = "opaque";
