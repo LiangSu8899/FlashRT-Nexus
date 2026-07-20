@@ -43,6 +43,36 @@ target_include_directories(capsule_backend_stub
   PRIVATE core/include)
 target_link_libraries(capsule_backend_stub PUBLIC capsule_core)
 
+option(CAPSULE_BUILD_FLASHRT_MODEL_ABI
+       "Build the FlashRT model-runtime ABI-only adopter" OFF)
+set(FLASHRT_RUNTIME_DIR "" CACHE PATH
+    "Path to FlashRT runtime/ (include/flashrt/model_runtime.h)")
+if(CAPSULE_BUILD_FLASHRT_MODEL_ABI)
+  if(NOT EXISTS "${FLASHRT_RUNTIME_DIR}/include/flashrt/model_runtime.h")
+    message(FATAL_ERROR
+      "CAPSULE_BUILD_FLASHRT_MODEL_ABI requires FLASHRT_RUNTIME_DIR")
+  endif()
+  set(_flashrt_exec_include "${FLASHRT_RUNTIME_DIR}/../exec/include")
+  if(NOT EXISTS "${_flashrt_exec_include}/flashrt/exec.h")
+    message(FATAL_ERROR
+      "FlashRT model-runtime headers require the sibling exec include tree")
+  endif()
+  add_library(capsule_model_flashrt_abi STATIC
+    backends/flashrt/flashrt_model_abi_adapter.cpp)
+  target_include_directories(capsule_model_flashrt_abi
+    PUBLIC backends/flashrt
+    PRIVATE host/src "${FLASHRT_RUNTIME_DIR}/include"
+            "${_flashrt_exec_include}")
+  target_link_libraries(capsule_model_flashrt_abi PUBLIC capsule_host)
+
+  add_executable(test_model_abi_adopt tests/test_model_abi_adopt.cpp)
+  target_include_directories(test_model_abi_adopt PRIVATE
+    host/src "${FLASHRT_RUNTIME_DIR}/include" "${_flashrt_exec_include}")
+  target_link_libraries(test_model_abi_adopt PRIVATE
+    capsule_model_flashrt_abi nexus_l2)
+  add_test(NAME model_abi_adopt COMMAND test_model_abi_adopt)
+endif()
+
 # ---- P0 acceptance test -----------------------------------------------------
 enable_testing()
 add_executable(test_core tests/test_core.cpp)
