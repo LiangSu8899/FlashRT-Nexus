@@ -1,4 +1,5 @@
 #include "flashrt_model_abi_adapter.h"
+#include "flashrt_model_extension_internal.h"
 
 #include "model_executor_internal.h"
 
@@ -18,20 +19,6 @@ struct Impl {
     cap_model_runtime pub{};
 };
 
-int map_status(int rc) {
-    switch (rc) {
-        case 0: return CAP_OK;
-        case -1:
-        case -3:
-        case -4:
-        case -7: return CAP_ERR_ARG;
-        case -2: return CAP_ERR_FORMAT;
-        case -5: return CAP_ERR_NOMEM;
-        case -6: return CAP_ERR_BACKEND;
-        default: return CAP_ERR;
-    }
-}
-
 uint32_t stage_kind(void* payload, uint64_t stage_index) {
     const auto* im = static_cast<const Impl*>(payload);
     if (!im || !im->plan || stage_index >= im->plan->n_stages)
@@ -46,49 +33,8 @@ int execute(void* payload, uint64_t stage_index) {
     const auto& stage = im->plan->stages[stage_index];
     if (stage.executor_kind != FRT_GENERIC_STAGE_OPAQUE)
         return CAP_ERR_FORMAT;
-    return map_status(im->plan->run_opaque(
+    return flashrt_model_callback_status(im->plan->run_opaque(
         im->plan->stage_self, stage.executor_ref));
-}
-
-bool metadata_export(const frt_runtime_export_v1* exp) {
-    return exp && exp->abi_version == FRT_RUNTIME_ABI_VERSION &&
-           exp->struct_size >= sizeof(frt_runtime_export_v1) &&
-           !exp->ctx && !exp->n_streams && !exp->n_graphs &&
-           !exp->n_buffers && !exp->n_capsule_regions &&
-           !exp->streams && !exp->graphs && !exp->buffers &&
-           !exp->capsule_regions && exp->identity &&
-           exp->retain && exp->release;
-}
-
-int query_plan(const frt_model_runtime_v1* model,
-               const frt_generic_stage_plan_ext_v1** out) {
-    *out = nullptr;
-    if (model->struct_size < FRT_MODEL_RUNTIME_V1_QUERY_EXTENSION_SIZE ||
-        !model->query_extension) return 0;
-    const void* extension = nullptr;
-    const int rc = model->query_extension(
-        model, FRT_EXT_GENERIC_STAGE_PLAN_V1,
-        FRT_GENERIC_STAGE_PLAN_ABI_VERSION, &extension);
-    if (rc != 0) return extension ? -1 : 0;
-    if (!extension) return -1;
-    *out = static_cast<const frt_generic_stage_plan_ext_v1*>(extension);
-    return 1;
-}
-
-bool valid_plan(const frt_generic_stage_plan_ext_v1* plan) {
-    if (!plan || plan->abi_version != FRT_GENERIC_STAGE_PLAN_ABI_VERSION ||
-        plan->struct_size < FRT_GENERIC_STAGE_PLAN_EXT_V1_SIZE ||
-        !plan->stages || !plan->n_stages || !plan->run_opaque)
-        return false;
-    for (uint64_t i = 0; i < plan->n_stages; ++i) {
-        const auto& stage = plan->stages[i];
-        if (!stage.name || !stage.name[0] ||
-            stage.executor_kind != FRT_GENERIC_STAGE_OPAQUE ||
-            (stage.n_after && !stage.after)) return false;
-        for (uint32_t k = 0; k < stage.n_after; ++k)
-            if (stage.after[k] >= i) return false;
-    }
-    return true;
 }
 
 bool valid_port(const frt_model_runtime_v1* model,
@@ -113,14 +59,15 @@ extern "C" int flashrt_adopt_model_runtime_abi(
     *out = nullptr;
     if (model->abi_version != FRT_MODEL_RUNTIME_ABI_VERSION ||
         model->struct_size < FRT_MODEL_RUNTIME_V1_BASE_SIZE) return -2;
-    if (!model->retain || !model->release || !metadata_export(model->exp) ||
+    if (!model->retain || !model->release ||
+        !flashrt_model_metadata_export(model->exp) ||
         (model->n_ports && !model->ports) || model->n_stages || model->stages)
         return -1;
 
-    const frt_generic_stage_plan_ext_v1* plan = nullptr;
-    const int plan_status = query_plan(model, &plan);
-    if (plan_status < 0 || (plan_status > 0 && !valid_plan(plan))) return -4;
-    if (plan_status == 0 && !model->verbs.step) return -4;
+    flashrt_model_authority authority;
+    if (flashrt_model_query_authority(model, false, &authority) != 0)
+        return -4;
+    const auto* plan = authority.plan;
 
     auto* im = new (std::nothrow) Impl();
     if (!im) return -4;

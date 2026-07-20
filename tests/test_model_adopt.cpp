@@ -17,6 +17,7 @@
  */
 #include "capsule/model_runtime.h"
 #include "flashrt_model_adapter.h"
+#include "nexus/schedulers/stage_dag.h"
 
 #include <cuda_runtime.h>
 #include <cstdio>
@@ -45,7 +46,13 @@ extern "C" void model_retain(void*)  { ++g_retains; }
 extern "C" void model_release(void*) { ++g_releases; }
 
 /* STAGED verb: host bytes -> the obs device buffer (graph-safe overwrite) */
-struct VerbCtx { void* obs_dptr = nullptr; cudaStream_t stream = nullptr; int calls = 0; };
+struct VerbCtx {
+    void* obs_dptr = nullptr;
+    cudaStream_t stream = nullptr;
+    int calls = 0;
+    int opaque_calls = 0;
+    const frt_generic_stage_plan_ext_v1* plan = nullptr;
+};
 extern "C" int staged_set_input(void* self, uint32_t port, const void* data,
                                 uint64_t bytes, int stream) {
     (void)stream;
@@ -56,6 +63,24 @@ extern "C" int staged_set_input(void* self, uint32_t port, const void* data,
                            v->stream) == cudaSuccess ? 0 : -6;
 }
 extern "C" const char* verb_last_error(void*) { return ""; }
+extern "C" int run_opaque(void* self, uint32_t ref) {
+    auto* v = static_cast<VerbCtx*>(self);
+    if (ref != 77 || cudaStreamSynchronize(v->stream) != cudaSuccess)
+        return -6;
+    ++v->opaque_calls;
+    return 0;
+}
+extern "C" int query_extension(const frt_model_runtime_v1* runtime,
+                                 uint64_t id, uint32_t min_version,
+                                 const void** out) {
+    if (!out) return -1;
+    *out = nullptr;
+    auto* v = static_cast<VerbCtx*>(runtime->self);
+    if (id != FRT_EXT_GENERIC_STAGE_PLAN_V1 || min_version > 1 || !v->plan)
+        return -3;
+    *out = v->plan;
+    return 0;
+}
 
 }  // namespace
 
@@ -246,6 +271,57 @@ int main(int argc, char** argv) {
     cap_ctx_destroy(c);
     flashrt_model_close(m);
     CHECK(g_releases == g_retains, "close released every reference");
+
+    /* Generic authority may mix exported GRAPH stages with a synchronous
+     * provider stage. The legacy stage table must be absent. */
+    const uint32_t mixed_after_1[1] = {0};
+    const uint32_t mixed_after_2[1] = {1};
+    frt_generic_stage_desc_v1 mixed_stages[3] = {
+        {"pre", FRT_GENERIC_STAGE_GRAPH, 0, 0, nullptr},
+        {"provider", FRT_GENERIC_STAGE_OPAQUE, 77, 1, mixed_after_1},
+        {"infer", FRT_GENERIC_STAGE_GRAPH, 1, 1, mixed_after_2},
+    };
+    frt_generic_stage_plan_ext_v1 mixed_plan{
+        FRT_GENERIC_STAGE_PLAN_ABI_VERSION, sizeof(mixed_plan),
+        mixed_stages, 3, &vctx, run_opaque};
+    vctx.plan = &mixed_plan;
+    model.struct_size = sizeof(model);
+    model.stages = nullptr;
+    model.n_stages = 0;
+    model.query_extension = query_extension;
+
+    cap_model_runtime* mixed = nullptr;
+    CHECK(flashrt_adopt_model_runtime(&model, &mixed) == 0 && mixed &&
+              mixed->n_stages == 3 && mixed->stages[0].graph &&
+              !mixed->stages[1].graph && mixed->stages[2].graph,
+          "generic authority adopts a GRAPH/OPAQUE/GRAPH plan");
+    cap_ctx mixed_ctx = cap_ctx_create(cap_model_backend(mixed));
+    vctx.opaque_calls = 0;
+    CHECK(mixed_ctx && cap_model_tick(mixed_ctx, mixed) == CAP_OK &&
+              vctx.opaque_calls == 1,
+          "mixed tick honors blocking GRAPH-to-OPAQUE dependencies");
+    cap_sync(mixed_ctx, mixed->stages[2].stream);
+    cudaMemcpy(got, frt_buffer_dptr(out), N, cudaMemcpyDeviceToHost);
+    CHECK(std::memcmp(got, pattern, N) == 0,
+          "mixed plan output matches the legacy graph path");
+    {
+        nexus::StageDagRunner mixed_runner(mixed_ctx, mixed);
+        CHECK(mixed_runner.ok() && mixed_runner.run_once() == CAP_OK &&
+                  mixed_runner.sync(2) == CAP_OK && vctx.opaque_calls == 2,
+              "StageDagRunner preserves GRAPH events and blocking OPAQUE completion");
+    }
+    CHECK(cap_model_state_status(mixed) == CAP_ERR_ARG,
+          "mixed authority does not claim graph-only snapshot semantics");
+    cap_ctx_destroy(mixed_ctx);
+    flashrt_model_close(mixed);
+    CHECK(g_releases == g_retains,
+          "mixed close released every model and export reference");
+
+    model.stages = stages;
+    model.n_stages = 2;
+    cap_model_runtime* dual = nullptr;
+    CHECK(flashrt_adopt_model_runtime(&model, &dual) == -4 && !dual,
+          "legacy and generic stage authorities are mutually exclusive");
 
     cudaStreamDestroy(raw_main);
     frt_graph_destroy(g_pre); frt_graph_destroy(g_infer);
