@@ -71,7 +71,9 @@ a lower layer to satisfy a higher one, that field is policy and belongs higher u
    promise: SWAP = the host writes the wired window, STAGED = the producer's verb accepts hot updates
    (advertise-and-refuse is a bug), SETUP = illegal inside a tick. The hot-input contract is testable:
    updating ports between ticks never recaptures, never allocates, never rebinds; `cap_model_tick`
-   allocates nothing (pre-created events). Graph-cache MECHANISM is the backend pass-through
+   allocates nothing on the GRAPH path (pre-created events). Generic OPAQUE callbacks are synchronous
+   provider calls, not graph replay, and may allocate; STAGED IO retains its existing hot contract.
+   Graph-cache MECHANISM is the backend pass-through
    (`flashrt_graph_evict*` / `variant_count`); eviction/budget POLICY is an L2 store, and eviction
    happens only at safe points (never while a variant may be in flight).
 8. **RTC is an L2 mode, not a runtime feature.** The runtime producer declares ports/stages and
@@ -101,6 +103,12 @@ a lower layer to satisfy a higher one, that field is policy and belongs higher u
 - [ ] Commit & file hygiene (§6).
 - [ ] Mirrored producer schema enums are compile-time asserted in the adapter;
       capsule public headers still have no producer include.
+- [ ] Legacy stages and a generic stage plan are mutually exclusive; Nexus
+      dispatches only GRAPH/OPAQUE capability and contains no provider branch.
+- [ ] Mixed/OPAQUE/step-only model state fails closed; no adapter fabricates
+      graph, event, stream, region, or snapshot capability.
+- [ ] A dynamically loaded producer remains resident until its adopted runtime
+      and callbacks are released; lookup is handle-local and `RTLD_LOCAL`.
 - [ ] Public docs and PR text use placeholders and contain no private paths,
       host/container names, credentials, internal URLs, or environment dumps.
 
