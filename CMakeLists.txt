@@ -93,6 +93,12 @@ if(CAPSULE_BUILD_FLASHRT_MODEL_ABI)
     capsule_model_flashrt_abi_loader)
   add_test(NAME model_loader COMMAND test_model_loader
     $<TARGET_FILE:test_model_provider>)
+  add_test(NAME model_adapter_architecture
+    COMMAND ${CMAKE_COMMAND}
+      -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+      -DABI_LIBRARY=$<TARGET_FILE:capsule_model_flashrt_abi>
+      -DNM_TOOL=${CMAKE_NM}
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_model_adapter_architecture.cmake)
 endif()
 
 # ---- P0 acceptance test -----------------------------------------------------
