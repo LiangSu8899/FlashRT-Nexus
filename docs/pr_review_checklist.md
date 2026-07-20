@@ -28,6 +28,10 @@ first and reject any dependency or policy that moved downward for convenience.
       ABI headers.
 - [ ] A new backend is an instance `cap_backend` implementation, not a
       `backend_kind` field, global registry, or model-runtime fork.
+- [ ] Legacy stages and a generic plan are XOR authorities; pure generic GRAPH
+      is rejected and OPAQUE executor references remain producer-opaque.
+- [ ] Provider-only adoption rejects GRAPH, SWAP, streams, buffers, and regions
+      instead of fabricating backend resources.
 
 ## Lifecycle and hot path
 
@@ -39,12 +43,22 @@ first and reject any dependency or policy that moved downward for convenience.
       fingerprint mismatch.
 - [ ] One context is not driven concurrently unless the owning L2 API provides
       explicit serialization.
+- [ ] OPAQUE is blocking and complete on return; no event, pending, async, or
+      cancellation behavior is claimed without a separately versioned seam.
+- [ ] GRAPH-to-OPAQUE dependencies synchronize required graph streams;
+      OPAQUE-to-GRAPH dependencies complete before graph enqueue.
+- [ ] Model-level state succeeds only for all-GRAPH runtimes with regions;
+      mixed, OPAQUE, and step-only paths fail closed.
+- [ ] A loader closes the adopted runtime before its handle-local producer DSO;
+      no live extension or callback pointer can outlast `dlclose`.
 
 ## Validation
 
 - [ ] Zero-dependency core/stub build and CTest pass.
 - [ ] FlashRT adapter build and model adoption tests pass when the seam changes.
 - [ ] Relevant scheduler/mode/embedded tests pass.
+- [ ] ABI-only CPU build has no CUDA, exec, graph-adapter, or backend undefined
+      symbols; graph-enabled tests preserve the legacy graph path.
 - [ ] Cross-repository gates use declared ports and avoid model constants.
 - [ ] Numerical claims use bit/token equality or a fixed justified tolerance.
 - [ ] Behavior changes and migration requirements are documented.

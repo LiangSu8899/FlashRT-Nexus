@@ -65,12 +65,34 @@ if(CAPSULE_BUILD_FLASHRT_MODEL_ABI)
             "${_flashrt_exec_include}")
   target_link_libraries(capsule_model_flashrt_abi PUBLIC capsule_host)
 
+  add_library(capsule_model_flashrt_abi_loader STATIC
+    backends/flashrt/flashrt_model_loader.cpp)
+  target_compile_definitions(capsule_model_flashrt_abi_loader
+    PRIVATE FLASHRT_MODEL_LOADER_ABI_ONLY=1)
+  target_include_directories(capsule_model_flashrt_abi_loader
+    PUBLIC backends/flashrt
+    PRIVATE "${FLASHRT_RUNTIME_DIR}/include" "${_flashrt_exec_include}")
+  target_link_libraries(capsule_model_flashrt_abi_loader PUBLIC
+    capsule_model_flashrt_abi ${CMAKE_DL_LIBS})
+
+  add_library(test_model_provider SHARED tests/fixtures/model_provider.cpp)
+  set_target_properties(test_model_provider PROPERTIES
+    CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES)
+  target_include_directories(test_model_provider PRIVATE
+    "${FLASHRT_RUNTIME_DIR}/include" "${_flashrt_exec_include}")
+
   add_executable(test_model_abi_adopt tests/test_model_abi_adopt.cpp)
   target_include_directories(test_model_abi_adopt PRIVATE
     host/src "${FLASHRT_RUNTIME_DIR}/include" "${_flashrt_exec_include}")
   target_link_libraries(test_model_abi_adopt PRIVATE
     capsule_model_flashrt_abi nexus_l2)
   add_test(NAME model_abi_adopt COMMAND test_model_abi_adopt)
+
+  add_executable(test_model_loader tests/test_model_loader.cpp)
+  target_link_libraries(test_model_loader PRIVATE
+    capsule_model_flashrt_abi_loader)
+  add_test(NAME model_loader COMMAND test_model_loader
+    $<TARGET_FILE:test_model_provider>)
 endif()
 
 # ---- P0 acceptance test -----------------------------------------------------
@@ -136,6 +158,14 @@ if(CAPSULE_BUILD_FLASHRT_BACKEND)
             "${FLASHRT_EXEC_DIR}/include" "${FLASHRT_RUNTIME_DIR}/include")
   target_link_libraries(capsule_backend_flashrt PUBLIC capsule_core capsule_host CUDA::cudart "${FLASHRT_EXEC_LIB}")
 
+  add_library(capsule_model_flashrt_loader STATIC
+    backends/flashrt/flashrt_model_loader.cpp)
+  target_include_directories(capsule_model_flashrt_loader
+    PUBLIC backends/flashrt
+    PRIVATE "${FLASHRT_EXEC_DIR}/include" "${FLASHRT_RUNTIME_DIR}/include")
+  target_link_libraries(capsule_model_flashrt_loader PUBLIC
+    capsule_backend_flashrt ${CMAKE_DL_LIBS})
+
   add_executable(test_flashrt_gpu tests/test_flashrt_gpu.cpp)
   target_include_directories(test_flashrt_gpu PRIVATE "${FLASHRT_EXEC_DIR}/include")
   target_link_libraries(test_flashrt_gpu PRIVATE capsule_core capsule_backend_flashrt CUDA::cudart "${FLASHRT_EXEC_LIB}")
@@ -165,10 +195,12 @@ if(CAPSULE_BUILD_FLASHRT_BACKEND)
     nexus/modes/action_chunk/rtc_action_chunk_compat.cpp
     backends/flashrt/flashrt_backend.cpp
     backends/flashrt/flashrt_runtime_adapter.cpp
-    backends/flashrt/flashrt_model_adapter.cpp)
+    backends/flashrt/flashrt_model_adapter.cpp
+    backends/flashrt/flashrt_model_loader.cpp)
   target_include_directories(capsule_nexus_flashrt
     PUBLIC  . core/include host/include backends/flashrt
     PRIVATE host/src "${FLASHRT_EXEC_DIR}/include"
             "${FLASHRT_RUNTIME_DIR}/include")
-  target_link_libraries(capsule_nexus_flashrt PUBLIC CUDA::cudart "${FLASHRT_EXEC_LIB}")
+  target_link_libraries(capsule_nexus_flashrt PUBLIC CUDA::cudart
+    "${FLASHRT_EXEC_LIB}" ${CMAKE_DL_LIBS})
 endif()
