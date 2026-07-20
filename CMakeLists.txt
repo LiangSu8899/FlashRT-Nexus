@@ -132,7 +132,8 @@ if(CAPSULE_BUILD_FLASHRT_BACKEND)
     backends/flashrt/flashrt_model_adapter.cpp)
   target_include_directories(capsule_backend_flashrt
     PUBLIC  backends/flashrt
-    PRIVATE core/include host/include "${FLASHRT_EXEC_DIR}/include" "${FLASHRT_RUNTIME_DIR}/include")
+    PRIVATE core/include host/include host/src
+            "${FLASHRT_EXEC_DIR}/include" "${FLASHRT_RUNTIME_DIR}/include")
   target_link_libraries(capsule_backend_flashrt PUBLIC capsule_core capsule_host CUDA::cudart "${FLASHRT_EXEC_LIB}")
 
   add_executable(test_flashrt_gpu tests/test_flashrt_gpu.cpp)
@@ -146,8 +147,9 @@ if(CAPSULE_BUILD_FLASHRT_BACKEND)
 
   add_executable(test_model_adopt tests/test_model_adopt.cpp)
   target_include_directories(test_model_adopt
-    PRIVATE "${FLASHRT_EXEC_DIR}/include" "${FLASHRT_RUNTIME_DIR}/include")
-  target_link_libraries(test_model_adopt PRIVATE capsule_core capsule_host capsule_backend_flashrt CUDA::cudart "${FLASHRT_EXEC_LIB}")
+    PRIVATE . "${FLASHRT_EXEC_DIR}/include" "${FLASHRT_RUNTIME_DIR}/include")
+  target_link_libraries(test_model_adopt PRIVATE capsule_core capsule_host
+    capsule_backend_flashrt nexus_l2 CUDA::cudart "${FLASHRT_EXEC_LIB}")
 
   # Loadable core+backend for in-process hosts (the phase-1 deployment shape:
   # a resident setup process hands its runtime export to Nexus via dlopen/ctypes).
@@ -166,6 +168,7 @@ if(CAPSULE_BUILD_FLASHRT_BACKEND)
     backends/flashrt/flashrt_model_adapter.cpp)
   target_include_directories(capsule_nexus_flashrt
     PUBLIC  . core/include host/include backends/flashrt
-    PRIVATE "${FLASHRT_EXEC_DIR}/include" "${FLASHRT_RUNTIME_DIR}/include")
+    PRIVATE host/src "${FLASHRT_EXEC_DIR}/include"
+            "${FLASHRT_RUNTIME_DIR}/include")
   target_link_libraries(capsule_nexus_flashrt PUBLIC CUDA::cudart "${FLASHRT_EXEC_LIB}")
 endif()

@@ -87,14 +87,27 @@ extern "C" int cap_model_tick(cap_ctx c, const cap_model_runtime* m) {
             for (uint32_t k = 0; k < s->n_after; ++k) {
                 const uint32_t dep = s->after[k];
                 if (dep >= i) return CAP_ERR_FORMAT;
-                if (!s->graph && m->stages[dep].graph) {
+                const cap_model_stage* predecessor = &m->stages[dep];
+                if (!s->graph && predecessor->graph) {
                     if (!c) return CAP_ERR_ARG;
-                    const int rc = cap_sync(c, m->stages[dep].stream);
+                    const int rc = cap_sync(c, predecessor->stream);
                     if (rc != CAP_OK) return rc;
+                } else if (s->graph && predecessor->graph &&
+                           predecessor->stream != s->stream) {
+                    if (!c || !m->backend || !m->stage_events) return CAP_ERR_ARG;
+                    cap_event ev = m->stage_events[dep];
+                    if (!ev || m->backend->stream_wait(
+                                   m->backend->self, s->stream, ev) != 0)
+                        return CAP_ERR_BACKEND;
                 }
             }
             const int rc = cap_model_execute_stage(c, m, i);
             if (rc != CAP_OK) return rc;
+            if (s->graph && m->stage_events && m->stage_events[i] &&
+                (!m->backend || m->backend->event_record(
+                                    m->backend->self, m->stage_events[i],
+                                    s->stream) != 0))
+                return CAP_ERR_BACKEND;
         }
         return CAP_OK;
     }

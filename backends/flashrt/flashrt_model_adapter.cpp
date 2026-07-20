@@ -1,5 +1,8 @@
 /* flashrt_model_adapter.cpp — frt_model_runtime_v1 -> cap_model_runtime. */
 #include "flashrt_model_adapter.h"
+#include "flashrt_model_extension_internal.h"
+
+#include "model_executor_internal.h"
 
 #include <cstring>
 #include <new>
@@ -36,8 +39,11 @@ ASSERT_SCHEMA_VALUE(CAP_MODEL_PORT_SETUP, FRT_RT_PORT_SETUP);
 #undef ASSERT_SCHEMA_VALUE
 
 struct Impl {
+    cap_model_executor_ops_v1 ops{};  /* must remain first: public sidecar */
     const frt_model_runtime_v1* model = nullptr;  /* retained */
+    const frt_generic_stage_plan_ext_v1* plan = nullptr;
     flashrt_runtime_binding rb{};
+    bool runtime_adopted = false;
 
     std::vector<cap_model_port>  ports;
     std::vector<cap_model_stage> stages;
@@ -49,6 +55,24 @@ struct Impl {
     cap_model_runtime pub{};
 };
 
+uint32_t stage_kind(void* payload, uint64_t stage_index) {
+    const auto* im = static_cast<const Impl*>(payload);
+    if (!im || !im->plan || stage_index >= im->plan->n_stages)
+        return UINT32_MAX;
+    return im->plan->stages[stage_index].executor_kind;
+}
+
+int execute(void* payload, uint64_t stage_index) {
+    const auto* im = static_cast<const Impl*>(payload);
+    if (!im || !im->plan || stage_index >= im->plan->n_stages)
+        return CAP_ERR_ARG;
+    const auto& stage = im->plan->stages[stage_index];
+    if (stage.executor_kind != FRT_GENERIC_STAGE_OPAQUE)
+        return CAP_ERR_FORMAT;
+    return flashrt_model_callback_status(im->plan->run_opaque(
+        im->plan->stage_self, stage.executor_ref));
+}
+
 /* Resolve an frt stream id to the capsule stream index the export adoption
  * produced (export stream order == rb.streams order). */
 int resolve_stream(const Impl* im, int frt_stream_id) {
@@ -57,6 +81,14 @@ int resolve_stream(const Impl* im, int frt_stream_id) {
         if (exp->streams[i].stream_id == frt_stream_id)
             return im->rb.streams[i];
     return 0;  /* the backend's own working stream */
+}
+
+bool all_opaque(const frt_generic_stage_plan_ext_v1* plan) {
+    if (!plan) return false;
+    for (uint64_t i = 0; i < plan->n_stages; ++i)
+        if (plan->stages[i].executor_kind != FRT_GENERIC_STAGE_OPAQUE)
+            return false;
+    return true;
 }
 
 }  // namespace
@@ -71,14 +103,27 @@ extern "C" int flashrt_adopt_model_runtime(const frt_model_runtime_v1* model,
     if ((model->n_ports && !model->ports) ||
         (model->n_stages && !model->stages)) return -1;
 
+    flashrt_model_authority authority;
+    if (flashrt_model_query_authority(model, true, &authority) != 0)
+        return -4;
+    const bool metadata_only = authority.step_only || all_opaque(authority.plan);
+    if (metadata_only && !flashrt_model_metadata_export(model->exp)) return -4;
+
     auto* im = new (std::nothrow) Impl();
     if (!im) return -4;
 
-    int rc = flashrt_adopt_runtime_export(model->exp, &im->rb);
-    if (rc != 0) { delete im; return -3; }
+    if (!metadata_only) {
+        int rc = flashrt_adopt_runtime_export(model->exp, &im->rb);
+        if (rc != 0) { delete im; return -3; }
+        im->runtime_adopted = true;
+    }
     model->retain(model->owner);
     im->model = model;
-    im->pub.impl = im;   /* set first so close() cleans up any failure below */
+    im->plan = authority.plan;
+    im->ops = {CAP_MODEL_EXECUTOR_OPS_MAGIC,
+               CAP_MODEL_EXECUTOR_OPS_VERSION, sizeof(im->ops), im,
+               stage_kind, execute};
+    im->pub.impl = &im->ops;  /* set first so close() cleans up failures */
 
     const frt_runtime_export_v1* exp = model->exp;
 
@@ -94,41 +139,59 @@ extern "C" int flashrt_adopt_model_runtime(const frt_model_runtime_v1* model,
         d.cadence_hint_hz = p.cadence_hint_hz;
         d.buffer = nullptr;
         d.offset = p.offset; d.bytes = p.bytes;
-        if (p.buffer) {
+        if (p.buffer && im->runtime_adopted) {
             d.buffer = flashrt_wrap_buffer(&im->rb.backend, p.buffer);
             if (!d.buffer) { flashrt_model_close(&im->pub); return -4; }
+        } else if (p.buffer) {
+            flashrt_model_close(&im->pub); return -4;
         }
         im->ports.push_back(d);
     }
 
     /* stages: DAG entries + a prepared schedule for cap_drive_tick */
-    im->stages.reserve(model->n_stages);
-    im->cap_stages.reserve(model->n_stages);
+    const uint64_t n_stages = im->plan ? im->plan->n_stages : model->n_stages;
+    im->stages.reserve(n_stages);
+    im->cap_stages.reserve(n_stages);
     size_t n_after_total = 0;
-    for (uint64_t i = 0; i < model->n_stages; ++i)
-        n_after_total += model->stages[i].n_after;
+    for (uint64_t i = 0; i < n_stages; ++i)
+        n_after_total += im->plan ? im->plan->stages[i].n_after
+                                  : model->stages[i].n_after;
     im->after_store.reserve(n_after_total);
     im->dep_pairs.reserve(n_after_total * 2);
 
-    for (uint64_t i = 0; i < model->n_stages; ++i) {
-        const frt_runtime_stage_desc& s = model->stages[i];
-        if (s.graph >= exp->n_graphs) { flashrt_model_close(&im->pub); return -4; }
-        const frt_runtime_graph_desc& g = exp->graphs[s.graph];
+    for (uint64_t i = 0; i < n_stages; ++i) {
+        const uint32_t executor_kind = im->plan
+            ? im->plan->stages[i].executor_kind
+            : static_cast<uint32_t>(FRT_GENERIC_STAGE_GRAPH);
+        const uint32_t executor_ref = im->plan
+            ? im->plan->stages[i].executor_ref : model->stages[i].graph;
+        const uint32_t* after = im->plan
+            ? im->plan->stages[i].after : model->stages[i].after;
+        const uint32_t n_after = im->plan
+            ? im->plan->stages[i].n_after : model->stages[i].n_after;
 
         cap_model_stage d{};
-        d.name = g.name;
-        d.graph = im->rb.graphs[s.graph];
-        d.key = (cap_shape_key)g.default_key;
-        d.stream = resolve_stream(im, g.stream_id);
+        d.name = im->plan ? im->plan->stages[i].name : nullptr;
+        d.stream = -1;
+        if (executor_kind == FRT_GENERIC_STAGE_GRAPH) {
+            if (!im->runtime_adopted || executor_ref >= exp->n_graphs) {
+                flashrt_model_close(&im->pub); return -4;
+            }
+            const frt_runtime_graph_desc& g = exp->graphs[executor_ref];
+            if (!d.name) d.name = g.name;
+            d.graph = im->rb.graphs[executor_ref];
+            d.key = (cap_shape_key)g.default_key;
+            d.stream = resolve_stream(im, g.stream_id);
+        }
         const size_t off = im->after_store.size();
-        for (uint32_t k = 0; k < s.n_after; ++k) {
-            if (s.after[k] >= i) { flashrt_model_close(&im->pub); return -4; }
-            im->after_store.push_back(s.after[k]);
-            im->dep_pairs.push_back((int)s.after[k]);   /* after  */
+        for (uint32_t k = 0; k < n_after; ++k) {
+            if (after[k] >= i) { flashrt_model_close(&im->pub); return -4; }
+            im->after_store.push_back(after[k]);
+            im->dep_pairs.push_back((int)after[k]);   /* after  */
             im->dep_pairs.push_back((int)i);            /* before */
         }
-        d.after = s.n_after ? &im->after_store[off] : nullptr;
-        d.n_after = s.n_after;
+        d.after = n_after ? &im->after_store[off] : nullptr;
+        d.n_after = n_after;
         im->stages.push_back(d);
 
         cap_stage st{};
@@ -140,11 +203,14 @@ extern "C" int flashrt_adopt_model_runtime(const frt_model_runtime_v1* model,
 
     /* pre-create one event per depended-upon stage: cap_model_tick then
      * runs allocation-free, tick after tick */
-    im->stage_events.assign(model->n_stages, nullptr);
-    for (uint64_t i = 0; i < model->n_stages; ++i)
-        for (uint32_t k = 0; k < model->stages[i].n_after; ++k) {
-            const uint32_t dep = model->stages[i].after[k];
-            if (!im->stage_events[dep]) {
+    im->stage_events.assign(n_stages, nullptr);
+    for (uint64_t i = 0; i < n_stages; ++i)
+        for (uint32_t k = 0; k < im->stages[i].n_after; ++k) {
+            const uint32_t dep = im->stages[i].after[k];
+            if (im->stages[i].graph && im->stages[dep].graph &&
+                (!im->plan ||
+                 im->stages[i].stream != im->stages[dep].stream) &&
+                !im->stage_events[dep]) {
                 cap_event ev = im->rb.backend.event(im->rb.backend.self);
                 if (!ev) { flashrt_model_close(&im->pub); return -4; }
                 im->stage_events[dep] = ev;
@@ -152,17 +218,18 @@ extern "C" int flashrt_adopt_model_runtime(const frt_model_runtime_v1* model,
         }
 
     cap_model_runtime& m = im->pub;
-    m.backend = &im->rb.backend;
+    m.backend = im->runtime_adopted ? &im->rb.backend : nullptr;
     m.ports = im->ports.data();   m.n_ports = im->ports.size();
     m.stages = im->stages.data(); m.n_stages = im->stages.size();
-    m.regions = im->rb.regions;   m.n_regions = im->rb.n_regions;
+    m.regions = im->runtime_adopted ? im->rb.regions : nullptr;
+    m.n_regions = im->runtime_adopted ? im->rb.n_regions : 0;
     m.schedule.stages = im->cap_stages.data();
     m.schedule.n_stages = (int)im->cap_stages.size();
     m.schedule.deps = im->dep_pairs.empty()
                           ? nullptr
                           : reinterpret_cast<const int(*)[2]>(im->dep_pairs.data());
     m.schedule.n_deps = (int)(im->dep_pairs.size() / 2);
-    m.stage_events = im->stage_events.data();
+    m.stage_events = im->runtime_adopted ? im->stage_events.data() : nullptr;
     m.fingerprint = exp->fingerprint;
     m.identity = exp->identity;
     m.self = model->self;
@@ -171,7 +238,7 @@ extern "C" int flashrt_adopt_model_runtime(const frt_model_runtime_v1* model,
     m.prepare = model->verbs.prepare;
     m.step = model->verbs.step;
     m.last_error = model->verbs.last_error;
-    m.impl = im;
+    m.impl = &im->ops;
 
     *out = &im->pub;
     return 0;
@@ -179,10 +246,12 @@ extern "C" int flashrt_adopt_model_runtime(const frt_model_runtime_v1* model,
 
 extern "C" void flashrt_model_close(cap_model_runtime* m) {
     if (!m || !m->impl) return;
-    Impl* im = static_cast<Impl*>(m->impl);
+    auto* ops = static_cast<cap_model_executor_ops_v1*>(m->impl);
+    Impl* im = static_cast<Impl*>(ops->payload);
     for (cap_event ev : im->stage_events)             /* before the backend dies */
         if (ev) im->rb.backend.event_free(im->rb.backend.self, ev);
-    flashrt_runtime_binding_fini(&im->rb);            /* backend + export */
+    if (im->runtime_adopted)
+        flashrt_runtime_binding_fini(&im->rb);        /* backend + export */
     if (im->model) im->model->release(im->model->owner);
     delete im;
 }
