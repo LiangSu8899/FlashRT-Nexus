@@ -20,6 +20,12 @@ graphs/buffers wrapped, regions materialized in contractual order), wires SWAP
 port windows as capsule buffers, prepares the stage schedule, and pre-creates
 the events that make the tick allocation-free.
 
+The adapter requires only `FRT_MODEL_RUNTIME_V1_BASE_SIZE`, the published v1
+prefix through `release`. It must not require the latest
+`sizeof(frt_model_runtime_v1)`; additive producer tails are ignored until a
+separately reviewed consumer explicitly probes them. A short prefix is rejected
+before Nexus retains the producer or adopts its export.
+
 ## The struct (capsule types only)
 
 | field | meaning |

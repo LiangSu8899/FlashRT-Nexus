@@ -59,7 +59,25 @@ extern "C" const char* verb_last_error(void*) { return ""; }
 
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    {
+        alignas(frt_model_runtime_v1)
+            unsigned char storage[FRT_MODEL_RUNTIME_V1_BASE_SIZE - 1] = {};
+        auto* short_model =
+            reinterpret_cast<frt_model_runtime_v1*>(storage);
+        short_model->abi_version = FRT_MODEL_RUNTIME_ABI_VERSION;
+        short_model->struct_size = FRT_MODEL_RUNTIME_V1_BASE_SIZE - 1;
+        cap_model_runtime* rej = reinterpret_cast<cap_model_runtime*>(1);
+        const int retains_before = g_retains;
+        const int releases_before = g_releases;
+        CHECK(flashrt_adopt_model_runtime(short_model, &rej) == -2 &&
+                  rej == nullptr && g_retains == retains_before &&
+                  g_releases == releases_before,
+              "adopt rejects a physical short v1 prefix without ownership");
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--prefix-only") == 0)
+        return g_fail;
+
     frt_ctx ctx = frt_ctx_create();
     if (!ctx) { std::printf("FAIL: frt_ctx_create (no GPU?)\n"); return 1; }
 
@@ -146,9 +164,10 @@ int main() {
         CHECK(flashrt_adopt_model_runtime(&bad, &rej) == -2,
               "adopt rejects wrong abi_version");
     }
+    model.struct_size = FRT_MODEL_RUNTIME_V1_BASE_SIZE;
     cap_model_runtime* m = nullptr;
     CHECK(flashrt_adopt_model_runtime(&model, &m) == 0 && m,
-          "flashrt_adopt_model_runtime");
+          "adopt accepts the exact required v1 prefix");
     const int base_retains = g_retains;
     CHECK(base_retains >= 2, "adoption retained model + export");
 
