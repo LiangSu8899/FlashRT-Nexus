@@ -65,6 +65,11 @@ enum cap_model_port_update {
     CAP_MODEL_PORT_SETUP = 2
 };
 
+enum cap_model_executor_kind {
+    CAP_MODEL_EXECUTOR_GRAPH = 0,
+    CAP_MODEL_EXECUTOR_OPAQUE = 1
+};
+
 /* Modality / dtype / layout / direction / update values mirror the producer
  * ABI (append-only after v1). The core never interprets them; they are
  * host-side routing data. */
@@ -129,9 +134,27 @@ int cap_model_find_port(const cap_model_runtime*, const char* name);
  * cap_stage) — the building block scheduling hosts use directly. */
 int cap_model_fire(cap_ctx, const cap_model_runtime*, uint64_t stage_index);
 
+/* Execute one stage through its declared mechanism. GRAPH preserves the
+ * existing cap_fire path. OPAQUE is synchronous and complete on return. */
+uint32_t cap_model_stage_executor_kind(const cap_model_runtime*,
+                                       uint64_t stage_index);
+int cap_model_execute_stage(cap_ctx, const cap_model_runtime*,
+                            uint64_t stage_index);
+
 /* Sugar: run the whole declared stage DAG once (cap_drive_tick over the
  * prepared schedule). Hosts that overlap/interrupt fire stages themselves. */
 int cap_model_tick(cap_ctx, const cap_model_runtime*);
+
+/* Model-level state is available only when every stage is GRAPH-backed and
+ * the adopted runtime declares restorable regions. OPAQUE and step-only
+ * runtimes fail closed instead of fabricating snapshot semantics. */
+int cap_model_state_status(const cap_model_runtime*);
+cap_capsule cap_model_snapshot(cap_ctx, const cap_model_runtime*, int tier,
+                               int stream);
+int cap_model_restore(cap_ctx, const cap_model_runtime*, cap_capsule,
+                      int stream);
+int cap_model_restore_into(cap_ctx, const cap_model_runtime*, cap_capsule,
+                           int stream);
 
 /* Flat accessors so dynamic-language hosts (ctypes/FFI) can drive an adopted
  * model without mirroring the structs above. */

@@ -2,6 +2,7 @@
  * standard model-runtime face (see header). Mechanism-thin: everything here
  * is a direct composition of core verbs and struct reads. */
 #include "capsule/model_runtime.h"
+#include "model_executor_internal.h"
 
 #include <cstring>
 
@@ -21,8 +22,83 @@ extern "C" int cap_model_fire(cap_ctx c, const cap_model_runtime* m,
     return cap_fire(c, &m->schedule.stages[stage_index]);
 }
 
+namespace {
+
+const cap_model_executor_ops_v1* executor_ops(
+        const cap_model_runtime* m, int* status) {
+    if (status) *status = CAP_ERR_ARG;
+    if (!m || !m->impl) return nullptr;
+    const auto* ops = static_cast<const cap_model_executor_ops_v1*>(m->impl);
+    if (ops->magic != CAP_MODEL_EXECUTOR_OPS_MAGIC ||
+        !ops->stage_kind || !ops->execute) {
+        if (status) *status = CAP_ERR_FORMAT;
+        return nullptr;
+    }
+    if (ops->version != CAP_MODEL_EXECUTOR_OPS_VERSION ||
+        ops->struct_size < CAP_MODEL_EXECUTOR_OPS_V1_SIZE) {
+        if (status) *status = CAP_ERR_VERSION;
+        return nullptr;
+    }
+    if (status) *status = CAP_OK;
+    return ops;
+}
+
+bool all_graph_stages(const cap_model_runtime* m) {
+    if (!m || !m->n_stages) return false;
+    for (uint64_t i = 0; i < m->n_stages; ++i)
+        if (!m->stages[i].graph) return false;
+    return true;
+}
+
+}  // namespace
+
+extern "C" uint32_t cap_model_stage_executor_kind(
+        const cap_model_runtime* m, uint64_t stage_index) {
+    if (!m || stage_index >= m->n_stages) return UINT32_MAX;
+    if (m->stages[stage_index].graph) return CAP_MODEL_EXECUTOR_GRAPH;
+    int status = CAP_OK;
+    const auto* ops = executor_ops(m, &status);
+    if (!ops) return UINT32_MAX;
+    const uint32_t kind = ops->stage_kind(ops->payload, stage_index);
+    return kind <= CAP_MODEL_EXECUTOR_OPAQUE ? kind : UINT32_MAX;
+}
+
+extern "C" int cap_model_execute_stage(cap_ctx c,
+                                        const cap_model_runtime* m,
+                                        uint64_t stage_index) {
+    if (!m || stage_index >= m->n_stages) return CAP_ERR_ARG;
+    if (m->stages[stage_index].graph)
+        return c ? cap_model_fire(c, m, stage_index) : CAP_ERR_ARG;
+    int status = CAP_OK;
+    const auto* ops = executor_ops(m, &status);
+    if (!ops) return status;
+    if (ops->stage_kind(ops->payload, stage_index) !=
+        CAP_MODEL_EXECUTOR_OPAQUE) return CAP_ERR_FORMAT;
+    return ops->execute(ops->payload, stage_index);
+}
+
 extern "C" int cap_model_tick(cap_ctx c, const cap_model_runtime* m) {
-    if (!c || !m) return CAP_ERR_ARG;
+    if (!m) return CAP_ERR_ARG;
+    if (!m->n_stages)
+        return m->step ? m->step(m->self) : CAP_ERR_ARG;
+    if (!all_graph_stages(m)) {
+        for (uint64_t i = 0; i < m->n_stages; ++i) {
+            const cap_model_stage* s = &m->stages[i];
+            for (uint32_t k = 0; k < s->n_after; ++k) {
+                const uint32_t dep = s->after[k];
+                if (dep >= i) return CAP_ERR_FORMAT;
+                if (!s->graph && m->stages[dep].graph) {
+                    if (!c) return CAP_ERR_ARG;
+                    const int rc = cap_sync(c, m->stages[dep].stream);
+                    if (rc != CAP_OK) return rc;
+                }
+            }
+            const int rc = cap_model_execute_stage(c, m, i);
+            if (rc != CAP_OK) return rc;
+        }
+        return CAP_OK;
+    }
+    if (!c) return CAP_ERR_ARG;
     if (!m->stage_events) {           /* hand-built runtime: allocating fallback */
         int failed = -1;
         return cap_drive_tick(c, &m->schedule, 0, &failed);
@@ -45,6 +121,36 @@ extern "C" int cap_model_tick(cap_ctx c, const cap_model_runtime* m) {
             return CAP_ERR_BACKEND;
     }
     return CAP_OK;
+}
+
+extern "C" int cap_model_state_status(const cap_model_runtime* m) {
+    return m && all_graph_stages(m) && m->regions && m->n_regions
+               ? CAP_OK : CAP_ERR_ARG;
+}
+
+extern "C" cap_capsule cap_model_snapshot(cap_ctx c,
+                                           const cap_model_runtime* m,
+                                           int tier, int stream) {
+    if (!c || cap_model_state_status(m) != CAP_OK) return nullptr;
+    cap_boundary boundary{m->regions, static_cast<int>(m->n_regions),
+                          nullptr, 0};
+    return cap_snapshot(c, &boundary, tier, stream);
+}
+
+extern "C" int cap_model_restore(cap_ctx c, const cap_model_runtime* m,
+                                  cap_capsule capsule, int stream) {
+    if (!c || !capsule || cap_model_state_status(m) != CAP_OK)
+        return CAP_ERR_ARG;
+    return cap_restore(c, capsule, stream);
+}
+
+extern "C" int cap_model_restore_into(cap_ctx c,
+                                       const cap_model_runtime* m,
+                                       cap_capsule capsule, int stream) {
+    if (!c || !capsule || cap_model_state_status(m) != CAP_OK)
+        return CAP_ERR_ARG;
+    return cap_restore_into(c, capsule, m->regions,
+                            static_cast<int>(m->n_regions), stream);
 }
 
 extern "C" cap_backend* cap_model_backend(cap_model_runtime* m) {

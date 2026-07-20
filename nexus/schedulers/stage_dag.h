@@ -6,7 +6,9 @@
  * for multi-rate loops. Allocation happens at construction; fire/query and the
  * schedule helpers are hot-path compositions of capsule verbs.
  *
- * Discipline: one stage has at most one in-flight replay. Dependencies may use
+ * GRAPH stages retain event-based completion. OPAQUE stages are synchronous:
+ * execute returns only after completion and no event is created. Discipline:
+ * one stage has at most one in-flight replay. Dependencies may use
  * the last completed/fired event from an earlier stage; this lets a fast action
  * stage reuse a stale context stage, but it does not permit overlapping two
  * writes into the same producer-owned hand-off buffer. A producer that wants
