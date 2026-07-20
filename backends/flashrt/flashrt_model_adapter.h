@@ -23,7 +23,7 @@ extern "C" {
 /* Adopt a model runtime. On success `*out` points at a fully wired
  * cap_model_runtime (the model retained, its export adopted) and the call
  * returns 0. Negative on failure:
- *   -1 bad args, -2 ABI version/size mismatch,
+ *   -1 bad args, -2 ABI version/required-prefix mismatch,
  *   -3 export adoption failed, -4 wiring failed.
  * Release with flashrt_model_close (never free `*out` yourself). */
 int flashrt_adopt_model_runtime(const frt_model_runtime_v1* model,
