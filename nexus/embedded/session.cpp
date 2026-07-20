@@ -55,17 +55,13 @@ bool valid_name(const char* s) {
     return true;
 }
 
-cap_boundary boundary(cap_model_runtime* m) {
-    cap_boundary b{};
-    b.regions = cap_model_region_array(m);
-    b.n_regions = cap_model_region_count(m);
-    return b;
-}
-
 int sync_all(nexus_embedded_session_s* s) {
     if (!s || !s->model) return CAP_ERR_ARG;
+    if (!s->ctx) return CAP_OK;
     int rc = CAP_OK;
     for (uint64_t i = 0; i < s->model->n_stages; ++i) {
+        if (cap_model_stage_executor_kind(s->model, i) ==
+            CAP_MODEL_EXECUTOR_OPAQUE) continue;
         int sr = cap_sync(s->ctx, s->model->stages[i].stream);
         if (sr != CAP_OK && rc == CAP_OK) rc = sr;
     }
@@ -143,8 +139,13 @@ extern "C" int nexus_embedded_open(const nexus_embedded_config* cfg,
     auto* s = new (std::nothrow) nexus_embedded_session_s();
     if (!s) return CAP_ERR_NOMEM;
     s->model = cfg->model;
-    s->ctx = cap_ctx_create(cap_model_backend(cfg->model));
-    if (!s->ctx) {
+    cap_backend* backend = cap_model_backend(cfg->model);
+    s->ctx = backend ? cap_ctx_create(backend) : nullptr;
+    bool needs_ctx = false;
+    for (uint64_t i = 0; i < cfg->model->n_stages; ++i)
+        needs_ctx |= cap_model_stage_executor_kind(cfg->model, i) ==
+                     CAP_MODEL_EXECUTOR_GRAPH;
+    if (needs_ctx && !s->ctx) {
         delete s;
         return CAP_ERR;
     }
@@ -225,7 +226,7 @@ extern "C" int nexus_embedded_tick(nexus_embedded_session* s,
 extern "C" int nexus_embedded_sync(nexus_embedded_session* s, int stream) {
     if (!s) return CAP_ERR_ARG;
     std::lock_guard<std::mutex> lock(s->mu);
-    return cap_sync(s->ctx, stream);
+    return s->ctx ? cap_sync(s->ctx, stream) : CAP_OK;
 }
 
 extern "C" int nexus_embedded_get_output(nexus_embedded_session* s,
@@ -301,8 +302,9 @@ extern "C" int nexus_embedded_snapshot(nexus_embedded_session* s,
                                        const char* name) {
     if (!s || !valid_name(name)) return CAP_ERR_ARG;
     std::lock_guard<std::mutex> lock(s->mu);
-    cap_boundary b = boundary(s->model);
-    cap_capsule cap = cap_snapshot(s->ctx, &b, CAP_TIER_HOST, 0);
+    if (cap_model_state_status(s->model) != CAP_OK) return CAP_ERR_ARG;
+    cap_capsule cap = cap_model_snapshot(
+        s->ctx, s->model, CAP_TIER_HOST, 0);
     if (!cap) return s->set_error("snapshot failed", CAP_ERR);
     int rc = sync_all(s);
     if (rc != CAP_OK) {
@@ -326,10 +328,9 @@ extern "C" int nexus_embedded_restore(nexus_embedded_session* s,
     if (it == s->capsules.end()) return s->set_error("missing capsule", CAP_ERR_ARG);
     int rc = CAP_OK;
     if (it->second.origin_restore) {
-        rc = cap_restore(s->ctx, it->second.cap, 0);
+        rc = cap_model_restore(s->ctx, s->model, it->second.cap, 0);
     } else {
-        cap_boundary b = boundary(s->model);
-        rc = cap_restore_into(s->ctx, it->second.cap, b.regions, b.n_regions, 0);
+        rc = cap_model_restore_into(s->ctx, s->model, it->second.cap, 0);
     }
     if (rc != CAP_OK) return s->set_error("restore failed", rc);
     rc = sync_all(s);
@@ -353,6 +354,7 @@ extern "C" int nexus_embedded_load(nexus_embedded_session* s,
                                    size_t len) {
     if (!s || !valid_name(name) || !blob || !len) return CAP_ERR_ARG;
     std::lock_guard<std::mutex> lock(s->mu);
+    if (cap_model_state_status(s->model) != CAP_OK) return CAP_ERR_ARG;
     cap_capsule cap = cap_load(s->ctx, blob, len);
     if (!cap) return s->set_error("load failed", CAP_ERR_FORMAT);
     auto it = s->capsules.find(name);
