@@ -151,8 +151,10 @@ if(CAPSULE_BUILD_FLASHRT_BACKEND)
 
   # The runtime-export ABI header (flashrt/runtime.h) is consumed as plain
   # data — headers only, nothing extra to link.
-  set(FLASHRT_RUNTIME_DIR "${FLASHRT_EXEC_DIR}/../runtime" CACHE PATH
-      "Path to FlashRT runtime/ (include/flashrt/runtime.h)")
+  if(NOT FLASHRT_RUNTIME_DIR)
+    set(FLASHRT_RUNTIME_DIR "${FLASHRT_EXEC_DIR}/../runtime" CACHE PATH
+        "Path to FlashRT runtime/ (include/flashrt/runtime.h)" FORCE)
+  endif()
 
   add_library(capsule_backend_flashrt STATIC
     backends/flashrt/flashrt_backend.cpp
