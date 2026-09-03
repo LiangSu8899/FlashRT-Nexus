@@ -24,6 +24,9 @@ extern "C" {
 
 #define CAP_ABI_VERSION 1u
 
+/* Runtime query for language bindings and deployment diagnostics. */
+uint32_t cap_abi_version(void);
+
 /* ---- opaque handles ------------------------------------------------------ */
 typedef struct cap_ctx_s*     cap_ctx;      /* core context: binds ONE backend       */
 typedef struct cap_capsule_s* cap_capsule;  /* a frozen, restorable state object      */

@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
 project(flashrt_nexus VERSION 0.1.0 LANGUAGES CXX)
 
+include(GNUInstallDirs)
+
 # FlashRT Nexus — state-first serving substrate for physical AI.
 # Its core is the "capsule" execution-state mechanism: a sovereign,
 # zero-dependency C ABI. No third-party deps; the hot path links nothing
@@ -212,3 +214,24 @@ if(CAPSULE_BUILD_FLASHRT_BACKEND)
   target_link_libraries(capsule_nexus_flashrt PUBLIC CUDA::cudart
     "${FLASHRT_EXEC_LIB}" ${CMAKE_DL_LIBS})
 endif()
+
+# ---- Installable SDK and runtime -------------------------------------------
+install(TARGETS capsule_core capsule_host nexus_l2
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+if(TARGET capsule_nexus_flashrt)
+  install(TARGETS capsule_nexus_flashrt
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+endif()
+install(FILES core/include/capsule/capsule.h
+  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/capsule)
+install(FILES host/include/capsule/model_runtime.h
+  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/capsule)
+install(FILES nexus/embedded/session.h
+  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/flashrt_nexus)
+install(FILES
+  nexus/modes/action_chunk/action_chunk_c.h
+  nexus/schedulers/stage_dag_c.h
+  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/flashrt_nexus)

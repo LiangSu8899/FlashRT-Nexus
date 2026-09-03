@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import os
 import re
+from copy import deepcopy
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -20,8 +22,12 @@ class ManifestError(ValueError):
 _ENV = re.compile(r"\$\{([^}:]+)(?::-(.*?))?\}|\$([A-Za-z_][A-Za-z0-9_]*)")
 
 
-def load_manifest(path: str | os.PathLike[str]) -> dict[str, Any]:
-    p = Path(path)
+def load_manifest(
+    source: str | os.PathLike[str] | Mapping[str, Any],
+) -> dict[str, Any]:
+    if isinstance(source, Mapping):
+        return deepcopy(dict(source))
+    p = Path(source)
     if not p.exists():
         raise ManifestError(f"manifest not found: {p}")
     data = parse_manifest_text(p.read_text())

@@ -154,21 +154,22 @@ class ModelSession:
     def act_arrays(self, images: list[np.ndarray], *, state: Any = None,
                    prompt: str | None = None,
                    seed: int | None = None) -> ActArrayResult:
+        with self.lock:
+            normalized = self._stage_arrays_locked(
+                images, state=state, prompt=prompt, seed=seed)
+            return self._tick_staged_arrays_locked(normalized)
+
+    def _stage_arrays_locked(self, images: list[np.ndarray], *, state: Any,
+                             prompt: str | None, seed: int | None) -> list[np.ndarray]:
         request: dict[str, Any] = {}
         if prompt is not None:
             request["prompt"] = prompt
         if state is not None:
             request["state"] = state
-        with self.lock:
-            self._set_prompt(request)
-            self._set_state(request)
-            normalized = normalize_image_arrays(images, self.producer.num_views)
-            return self._run_images_array_locked(normalized, seed)
-
-    def _run_images_array_locked(self, images: list[np.ndarray],
-                                 seed: Any) -> ActArrayResult:
-        views = make_image_views(images)
-        t0 = time.perf_counter()
+        self._set_prompt(request)
+        self._set_state(request)
+        normalized = normalize_image_arrays(images, self.producer.num_views)
+        views = make_image_views(normalized)
         rc = self.nx.cap_model_set_input(
             self.model,
             self.ports["images"],
@@ -179,6 +180,18 @@ class ModelSession:
         if rc != CAP_OK:
             raise RuntimeError(f"cap_model_set_input(images) rc={rc}")
         self._seed_noise(seed)
+        return normalized
+
+    def _run_images_array_locked(self, images: list[np.ndarray],
+                                 seed: Any) -> ActArrayResult:
+        self._stage_arrays_locked(
+            images, state=None, prompt=None, seed=seed)
+        return self._tick_staged_arrays_locked(images)
+
+    def _tick_staged_arrays_locked(
+        self, images: list[np.ndarray],  # noqa: ARG002
+    ) -> ActArrayResult:
+        t0 = time.perf_counter()
         rc = self.nx.cap_model_tick(self.ctx, self.model)
         if rc != CAP_OK:
             err = _decode(self.nx.cap_model_last_error(self.model))
