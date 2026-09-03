@@ -10,6 +10,7 @@ include(GNUInstallDirs)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
@@ -77,10 +78,36 @@ if(CAPSULE_BUILD_FLASHRT_MODEL_ABI)
   target_link_libraries(capsule_model_flashrt_abi_loader PUBLIC
     capsule_model_flashrt_abi ${CMAKE_DL_LIBS})
 
+  # Loadable Nexus runtime for native providers. The producer owns all GPU
+  # execution; this library only consumes the stable model-runtime ABI.
+  add_library(capsule_nexus_flashrt_abi SHARED
+    core/src/capsule.cpp
+    host/src/model_runtime.cpp
+    nexus/schedulers/stage_dag.cpp
+    nexus/schedulers/stage_dag_c.cpp
+    nexus/embedded/session.cpp
+    nexus/state/graph_store.cpp
+    nexus/modes/action_chunk/action_chunk.cpp
+    nexus/modes/action_chunk/action_chunk_c.cpp
+    nexus/modes/action_chunk/rtc_action_chunk_compat.cpp
+    backends/flashrt/flashrt_model_abi_adapter.cpp
+    backends/flashrt/flashrt_model_abi_exports.cpp)
+  target_include_directories(capsule_nexus_flashrt_abi
+    PUBLIC . core/include host/include backends/flashrt
+    PRIVATE host/src "${FLASHRT_RUNTIME_DIR}/include"
+            "${_flashrt_exec_include}")
+
   add_library(test_model_provider SHARED tests/fixtures/model_provider.cpp)
   set_target_properties(test_model_provider PROPERTIES
     CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES)
   target_include_directories(test_model_provider PRIVATE
+    "${FLASHRT_RUNTIME_DIR}/include" "${_flashrt_exec_include}")
+
+  add_library(test_robot_model_provider SHARED
+    tests/fixtures/robot_model_provider.cpp)
+  set_target_properties(test_robot_model_provider PROPERTIES
+    CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES)
+  target_include_directories(test_robot_model_provider PRIVATE
     "${FLASHRT_RUNTIME_DIR}/include" "${_flashrt_exec_include}")
 
   add_executable(test_model_abi_adopt tests/test_model_abi_adopt.cpp)
@@ -95,6 +122,16 @@ if(CAPSULE_BUILD_FLASHRT_MODEL_ABI)
     capsule_model_flashrt_abi_loader)
   add_test(NAME model_loader COMMAND test_model_loader
     $<TARGET_FILE:test_model_provider>)
+  find_package(Python3 COMPONENTS Interpreter QUIET)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME python_native_embedded
+      COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/gate_native_embedded.py
+        --nexus $<TARGET_FILE:capsule_nexus_flashrt_abi>
+        --provider $<TARGET_FILE:test_robot_model_provider>)
+    set_tests_properties(python_native_embedded PROPERTIES
+      ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+  endif()
   add_test(NAME model_adapter_architecture
     COMMAND ${CMAKE_COMMAND}
       -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
@@ -222,6 +259,11 @@ install(TARGETS capsule_core capsule_host nexus_l2
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 if(TARGET capsule_nexus_flashrt)
   install(TARGETS capsule_nexus_flashrt
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+endif()
+if(TARGET capsule_nexus_flashrt_abi)
+  install(TARGETS capsule_nexus_flashrt_abi
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()

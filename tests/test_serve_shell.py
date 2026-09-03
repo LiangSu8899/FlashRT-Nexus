@@ -17,10 +17,12 @@ from serve.session import (
 
 class ServeShellTests(unittest.TestCase):
     def test_manifest_mapping_is_copied(self):
-        source = {"model": {"config": "pi05"}}
+        os.environ["NEXUS_TEST_CONFIG"] = "pi05"
+        source = {"model": {"config": "$NEXUS_TEST_CONFIG"}}
         loaded = load_manifest(source)
+        self.assertEqual(loaded["model"]["config"], "pi05")
         loaded["model"]["config"] = "changed"
-        self.assertEqual(source["model"]["config"], "pi05")
+        self.assertEqual(source["model"]["config"], "$NEXUS_TEST_CONFIG")
 
     def test_explicit_library_is_resolved(self):
         with tempfile.TemporaryDirectory() as directory:

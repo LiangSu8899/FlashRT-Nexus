@@ -21,6 +21,7 @@ from .ffi import (
     FRT_PI05_DTYPE_FLOAT16,
     FRT_PI05_DTYPE_FLOAT32,
     FRT_RT_PIXEL_RGB8,
+    FRT_RT_PORT_STAGED,
     CapBoundary,
     CapRegion,
     FrtImageView,
@@ -63,40 +64,51 @@ class ModelSession:
             producer.runtime_ptr, ctypes.byref(self.model))
         if rc != CAP_OK:
             raise RuntimeError(f"flashrt_adopt_model_runtime rc={rc}")
-        self.ctx = ctypes.c_void_p(self.nx.cap_ctx_create(
-            self.nx.cap_model_backend(self.model)))
-        if not self.ctx:
-            raise RuntimeError("cap_ctx_create failed")
-        self.fingerprint = int(self.nx.cap_model_fingerprint(self.model))
-        self.identity = _decode(self.nx.cap_model_identity(self.model))
-        self.ports = {
-            "images": self._port("images"),
-            "actions": self._port("actions"),
-        }
-        self.optional_ports = {
-            "prompt": self._optional_port("prompt"),
-            "text": self._optional_port("text"),
-            "state": self._optional_port("state"),
-        }
-        noise_port = self.nx.cap_model_find_port(self.model, b"noise")
-        self.noise_port = int(noise_port) if noise_port >= 0 else -1
-        self.noise_buf = (self.nx.cap_model_port_buffer(self.model, noise_port)
-                          if self.noise_port >= 0 else None)
-        self.noise_bytes = (int(self.nx.cap_model_port_bytes(
-            self.model, noise_port)) if self.noise_port >= 0 else 0)
-        self.stream = int(self.nx.cap_model_stage_stream(self.model, 0))
-        self.action_shape = producer.action_shape
-        self.chunk_id = 0
-        # One cap_ctx is driven by one thread of control (the core rule).
-        # The transport may be threaded; every mutating verb serializes here.
-        self.lock = threading.Lock()
-        self.capsules: dict[str, CapsuleRecord] = {}
-        self.skipped_capsules: list[str] = []
-        self.capsule_dir = Path(capsule_dir) if capsule_dir else None
-        if self.capsule_dir:
-            self.capsule_dir.mkdir(parents=True, exist_ok=True)
-            self._load_persisted_capsules()
-        self.phase = "SERVE"
+        self.ctx = ctypes.c_void_p()
+        try:
+            backend = self.nx.cap_model_backend(self.model)
+            self.ctx = ctypes.c_void_p(
+                self.nx.cap_ctx_create(backend) if backend else None)
+            if backend and not self.ctx:
+                raise RuntimeError("cap_ctx_create failed")
+            self.fingerprint = int(self.nx.cap_model_fingerprint(self.model))
+            self.identity = _decode(self.nx.cap_model_identity(self.model))
+            self.ports = {
+                "images": self._port("images"),
+                "actions": self._port("actions"),
+            }
+            self.optional_ports = {
+                "prompt": self._optional_port("prompt"),
+                "text": self._optional_port("text"),
+                "state": self._optional_port("state"),
+            }
+            noise_port = self.nx.cap_model_find_port(self.model, b"noise")
+            self.noise_port = int(noise_port) if noise_port >= 0 else -1
+            self.noise_buf = (self.nx.cap_model_port_buffer(self.model, noise_port)
+                              if self.noise_port >= 0 else None)
+            self.noise_bytes = (int(self.nx.cap_model_port_bytes(
+                self.model, noise_port)) if self.noise_port >= 0 else 0)
+            self.noise_update = (int(self.nx.cap_model_port_update(
+                self.model, noise_port)) if self.noise_port >= 0 else -1)
+            self.stream = int(self.nx.cap_model_stage_stream(self.model, 0))
+            self.action_shape = producer.action_shape
+            self.chunk_id = 0
+            # One cap_ctx is driven by one thread of control (the core rule).
+            # The transport may be threaded; every mutating verb serializes here.
+            self.lock = threading.Lock()
+            self.capsules: dict[str, CapsuleRecord] = {}
+            self.skipped_capsules: list[str] = []
+            self.capsule_dir = Path(capsule_dir) if capsule_dir else None
+            if self.capsule_dir:
+                self.capsule_dir.mkdir(parents=True, exist_ok=True)
+                self._load_persisted_capsules()
+            self.phase = "SERVE"
+        except Exception:
+            if self.ctx:
+                self.nx.cap_ctx_destroy(self.ctx)
+            self.nx.flashrt_model_close(self.model)
+            self.model = None
+            raise
 
     def close(self) -> None:
         for rec in list(self.capsules.values()):
@@ -196,7 +208,8 @@ class ModelSession:
         if rc != CAP_OK:
             err = _decode(self.nx.cap_model_last_error(self.model))
             raise RuntimeError(f"cap_model_tick rc={rc}: {err}")
-        self.nx.cap_sync(self.ctx, self.stream)
+        if self.ctx:
+            self.nx.cap_sync(self.ctx, self.stream)
         actions = self._read_actions()
         self.chunk_id += 1
         latency_ms = (time.perf_counter() - t0) * 1000.0
@@ -306,10 +319,14 @@ class ModelSession:
             raise RuntimeError(
                 f"unsupported Pi05 noise dtype {self.producer.noise_dtype}")
         buf = ctypes.create_string_buffer(noise, self.noise_bytes)
-        rc = self.nx.cap_swap(self.ctx, self.noise_buf, buf,
-                              self.noise_bytes, self.stream)
+        if self.noise_update == FRT_RT_PORT_STAGED:
+            rc = self.nx.cap_model_set_input(
+                self.model, self.noise_port, buf, self.noise_bytes, -1)
+        else:
+            rc = self.nx.cap_swap(self.ctx, self.noise_buf, buf,
+                                  self.noise_bytes, self.stream)
         if rc != CAP_OK:
-            raise RuntimeError(f"cap_swap(noise) rc={rc}")
+            raise RuntimeError(f"noise staging failed rc={rc}")
 
     def _read_actions(self) -> np.ndarray:
         out = np.empty(self.action_shape, dtype=np.float32)

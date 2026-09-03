@@ -95,7 +95,10 @@ class ActionChunkSession:
         config.chunk_length = chunk_length
         config.action_bytes = action_dim * np.dtype(np.float32).itemsize
         config.ring_slots = options.ring_slots
-        config.execute_horizon = options.execute_horizon
+        # The application stages a fresh observation and fires the context
+        # stage before every request. Disable the mode's same-context
+        # auto-prefetch; ``should_request`` exposes the host-side threshold.
+        config.execute_horizon = 0
         config.poll_budget = options.poll_budget
         config.deadline_steps = options.deadline_steps
         config.prepare_policy = NEXUS_AC_PREPARE_NONE
@@ -146,6 +149,14 @@ class ActionChunkSession:
     def remaining(self) -> int:
         return int(self.nx.nexus_action_chunk_remaining(self._mode))
 
+    @property
+    def should_request(self) -> bool:
+        return (
+            self.has_active
+            and not self.in_flight
+            and self.remaining <= self.options.execute_horizon
+        )
+
     def request(self, images: list[np.ndarray], *, state: Any = None,
                 prompt: str | None = None, seed: int | None = None) -> None:
         """Stage the latest observation and request its next action chunk."""
@@ -182,10 +193,16 @@ class ActionChunkSession:
     def next_action(self) -> np.ndarray | None:
         action = np.empty(self.session.action_shape[1], dtype=np.float32)
         written = ctypes.c_uint64()
+        held_before = int(
+            self.nx.nexus_action_chunk_held_actions(self._mode))
         state = self.nx.nexus_action_chunk_next_action(
             self._mode, ctypes.c_void_p(action.ctypes.data), action.nbytes,
             ctypes.byref(written))
-        if state in {NEXUS_AC_IDLE, NEXUS_AC_PENDING, NEXUS_AC_FALLBACK}:
+        if state == NEXUS_AC_FALLBACK:
+            held_after = int(
+                self.nx.nexus_action_chunk_held_actions(self._mode))
+            return action if held_after > held_before else None
+        if state in {NEXUS_AC_IDLE, NEXUS_AC_PENDING}:
             return None
         if state != NEXUS_AC_READY or int(written.value) != action.nbytes:
             raise RuntimeError(
@@ -208,4 +225,3 @@ class ActionChunkSession:
             "held_actions": int(
                 self.nx.nexus_action_chunk_held_actions(self._mode)),
         }
-

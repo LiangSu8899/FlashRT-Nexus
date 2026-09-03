@@ -18,11 +18,11 @@ def main(argv: list[str] | None = None) -> int:
     serve.add_argument("manifest")
     args = ap.parse_args(argv)
     if args.cmd == "serve":
-        return _serve(args.manifest)
+        return serve_deployment(args.manifest)
     return 2
 
 
-def _serve(path: str) -> int:
+def serve_deployment(path: str) -> int:
     manifest = load_manifest(path)
     serve_cfg = get_section(manifest, "serve")
     transport = optional_str(serve_cfg, "transport", "act_http")

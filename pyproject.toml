@@ -25,3 +25,5 @@ Issues = "https://github.com/LiangSu8899/FlashRT-Nexus/issues"
 [tool.setuptools.packages.find]
 include = ["flashrt_nexus*", "serve*"]
 
+[tool.setuptools.package-data]
+flashrt_nexus = ["lib/*.so", "lib/*.dylib", "lib/*.dll"]

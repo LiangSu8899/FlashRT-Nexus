@@ -35,9 +35,13 @@ def open_deployment(
         producer_cfg, "nexus_lib", os.environ.get("NEXUS_LIB", ""))
     nexus_lib = find_library(configured_lib or None)
     producer = build_producer(manifest)
-    session = ModelSession(
-        nexus_lib=nexus_lib,
-        producer=producer,
-        capsule_dir=optional_str(state_cfg, "capsule_dir", ""),
-    )
+    try:
+        session = ModelSession(
+            nexus_lib=nexus_lib,
+            producer=producer,
+            capsule_dir=optional_str(state_cfg, "capsule_dir", ""),
+        )
+    except Exception:
+        producer.release()
+        raise
     return Deployment(manifest=manifest, producer=producer, session=session)
