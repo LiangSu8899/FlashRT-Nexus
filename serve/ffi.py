@@ -142,7 +142,7 @@ class NexusActionChunkConfig(ctypes.Structure):
     ]
 
 
-def bind_nexus(nx: ctypes.CDLL) -> None:
+def bind_nexus(nx: ctypes.CDLL, *, model_runtime: bool = True) -> None:
     p = ctypes.c_void_p
     u64 = ctypes.c_uint64
     u32 = ctypes.c_uint32
@@ -202,6 +202,9 @@ def bind_nexus(nx: ctypes.CDLL) -> None:
         "nexus_action_chunk_last_error": (i, [p]),
     }
     for name, (restype, argtypes) in sigs.items():
+        if not model_runtime and name in {
+                "flashrt_adopt_model_runtime", "flashrt_model_close"}:
+            continue
         fn = getattr(nx, name)
         fn.restype = restype
         fn.argtypes = argtypes

@@ -193,8 +193,15 @@ ActionChunkMode::ActionChunkMode(StageDagRunner* runner,
           ActionChunkConfig{action_stage, UINT32_MAX, 0, 0, 1, 1,
                             max_pending_polls}) {}
 
+ActionChunkMode::ActionChunkMode(
+        const nexus_action_chunk_executor_v1& executor,
+        const ActionChunkConfig& config)
+    : ActionChunkMode(static_cast<StageDagRunner*>(nullptr), config) {
+    external_ = executor;
+}
+
 int ActionChunkMode::begin_request() {
-    if (!runner_ || !runner_->ok()) return CAP_ERR_ARG;
+    if (!external_.submit && (!runner_ || !runner_->ok())) return CAP_ERR_ARG;
     if (in_flight_ || waiting_slot_ >= 0) return CAP_ERR_ARG;
     if (begun_) return CAP_OK;
     if (config_.state_dim && has_state_)
@@ -252,7 +259,8 @@ int ActionChunkMode::commit_request() {
             pending_slot_ = next;
         }
     }
-    int rc = runner_->fire(config_.action_stage);
+    int rc = external_.submit ? external_.submit(external_.self)
+                              : runner_->fire(config_.action_stage);
     if (rc != CAP_OK) {
         last_error_ = rc;
         pending_slot_ = -1;
@@ -276,9 +284,10 @@ int ActionChunkMode::request() {
 }
 
 ActionChunkState ActionChunkMode::poll() {
-    if (!runner_ || !runner_->ok()) return ActionChunkState::kError;
+    if (!external_.query && (!runner_ || !runner_->ok())) return ActionChunkState::kError;
     if (!in_flight_) return ActionChunkState::kIdle;
-    int q = runner_->query(config_.action_stage);
+    int q = external_.query ? external_.query(external_.self)
+                            : runner_->query(config_.action_stage);
     if (q == 0) {
         last_ready_ticks_ = static_cast<uint32_t>(pending_ticks_);
         total_ready_ticks_ += last_ready_ticks_;
@@ -406,7 +415,7 @@ ActionChunkState ActionChunkMode::next_action(void* out, uint64_t capacity,
             }
             return ActionChunkState::kFallback;
         }
-        if (!in_flight_) {
+        if (!in_flight_ && !external_.submit) {
             int rc = request();
             if (rc != CAP_OK) {
                 last_error_ = rc;
@@ -448,7 +457,7 @@ ActionChunkState ActionChunkMode::next_action(void* out, uint64_t capacity,
         active_slot_ = -1;
         active_index_ = 0;
     }
-    if (active_slot_ >= 0 && !in_flight_ && waiting_slot_ < 0 &&
+    if (!external_.submit && active_slot_ >= 0 && !in_flight_ && waiting_slot_ < 0 &&
         remaining_actions() <= config_.execute_horizon) {
         (void)request();  /* prefetch best-effort; explicit poll reports errs */
     }
@@ -461,7 +470,7 @@ int ActionChunkMode::advance_step() {
 }
 
 ActionChunkState ActionChunkMode::sync_next_chunk() {
-    if (!runner_ || !runner_->ok()) return ActionChunkState::kError;
+    if (!external_.sync && (!runner_ || !runner_->ok())) return ActionChunkState::kError;
     if (!in_flight_) {
         int rc = request();
         if (rc != CAP_OK) {
@@ -469,7 +478,8 @@ ActionChunkState ActionChunkMode::sync_next_chunk() {
             return ActionChunkState::kError;
         }
     }
-    int rc = runner_->sync(config_.action_stage);
+    int rc = external_.sync ? external_.sync(external_.self)
+                            : runner_->sync(config_.action_stage);
     if (rc != CAP_OK) {
         last_error_ = rc;
         in_flight_ = false;
@@ -822,6 +832,12 @@ void ActionChunkMode::promote_waiting() {
 
 int ActionChunkMode::copy_output_to_pending_slot() {
     if (!chunking_enabled() || pending_slot_ < 0) return CAP_OK;
+    if (external_.read) {
+        uint64_t written = 0;
+        const int rc = external_.read(external_.self, slot_ptr(pending_slot_),
+                                      chunk_bytes_, &written);
+        return rc != CAP_OK ? rc : written == chunk_bytes_ ? CAP_OK : CAP_ERR_ARG;
+    }
     cap_model_runtime* model = runner_->model();
     if (!model) return CAP_ERR_ARG;
     uint64_t written = 0;

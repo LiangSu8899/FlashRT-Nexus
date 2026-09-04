@@ -59,7 +59,7 @@ class ActionChunkOptions:
 
 
 class ActionChunkSession:
-    """Drive one split model runtime without blocking the control loop."""
+    """Drive a full or split model runtime through action chunks."""
 
     def __init__(self, session: Any, options: ActionChunkOptions):
         if options.consume not in _CONSUME:
@@ -75,11 +75,14 @@ class ActionChunkSession:
 
         stages = int(self.nx.cap_model_n_stages(session.model))
         action_stage = stages - 1 if options.action_stage is None else options.action_stage
-        if stages < 2 or not 0 <= options.context_stage < stages:
-            raise ValueError("action chunks require a split model runtime")
-        if not 0 <= action_stage < stages or action_stage == options.context_stage:
+        if stages < 1:
+            raise ValueError("action chunks require a declared stage")
+        context_stage = None if stages == 1 else options.context_stage
+        if context_stage is not None and not 0 <= context_stage < stages:
+            raise ValueError("context stage is out of range")
+        if not 0 <= action_stage < stages or action_stage == context_stage:
             raise ValueError("context and action stages must be distinct")
-        self.context_stage = options.context_stage
+        self.context_stage = context_stage
         self.action_stage = action_stage
 
         rc = self.nx.nexus_stage_dag_create(
@@ -161,16 +164,19 @@ class ActionChunkSession:
                 prompt: str | None = None, seed: int | None = None) -> None:
         """Stage the latest observation and request its next action chunk."""
         with self.session.lock:
+            if self.in_flight:
+                raise RuntimeError("an action chunk request is already in flight")
             self.session._stage_arrays_locked(
                 images, state=state, prompt=prompt, seed=seed)
-            self.nx.nexus_stage_dag_query(self._dag, self.context_stage)
-            rc = self.nx.nexus_stage_dag_fire(self._dag, self.context_stage)
-            if rc != CAP_OK:
-                self.nx.nexus_stage_dag_sync(self._dag, self.context_stage)
-                rc = self.nx.nexus_stage_dag_fire(
-                    self._dag, self.context_stage)
-            if rc != CAP_OK:
-                raise RuntimeError(f"context stage fire rc={rc}")
+            if self.context_stage is not None:
+                self.nx.nexus_stage_dag_query(self._dag, self.context_stage)
+                rc = self.nx.nexus_stage_dag_fire(self._dag, self.context_stage)
+                if rc != CAP_OK:
+                    self.nx.nexus_stage_dag_sync(self._dag, self.context_stage)
+                    rc = self.nx.nexus_stage_dag_fire(
+                        self._dag, self.context_stage)
+                if rc != CAP_OK:
+                    raise RuntimeError(f"context stage fire rc={rc}")
             rc = self.nx.nexus_action_chunk_request(self._mode)
             if rc != CAP_OK:
                 raise RuntimeError(f"action chunk request rc={rc}")

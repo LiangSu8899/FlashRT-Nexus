@@ -8,6 +8,7 @@ covering the deployment files Nexus needs.
 from __future__ import annotations
 
 import os
+import json
 import re
 from copy import deepcopy
 from collections.abc import Mapping
@@ -37,6 +38,11 @@ def load_manifest(
 
 
 def parse_manifest_text(text: str) -> dict[str, Any]:
+    if text.lstrip().startswith("{"):
+        value = json.loads(text)
+        if not isinstance(value, dict):
+            raise ManifestError("manifest must be a mapping")
+        return _expand_tree(value)
     root: dict[str, Any] = {}
     stack: list[tuple[int, dict[str, Any]]] = [(-1, root)]
     for lineno, raw in enumerate(text.splitlines(), 1):
@@ -121,6 +127,8 @@ def _strip_comment(line: str) -> str:
 
 
 def _parse_scalar(value: str) -> Any:
+    if value.strip().startswith("["):
+        return _expand_tree(json.loads(value))
     value = _unquote(value.strip())
     value = _expand_env(value)
     low = value.lower()

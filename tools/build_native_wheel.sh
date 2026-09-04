@@ -20,7 +20,7 @@ cmake_args=(
   -DCAPSULE_BUILD_FLASHRT_MODEL_ABI=ON
   -DFLASHRT_RUNTIME_DIR="$flashrt_root/runtime"
 )
-targets=(capsule_nexus_flashrt_abi)
+targets=(capsule_nexus capsule_nexus_flashrt_abi)
 if [[ "$backend" == exec ]]; then
   cmake_args+=(
     -DCAPSULE_BUILD_FLASHRT_BACKEND=ON
@@ -38,6 +38,8 @@ mkdir -p "$stage_root/source/flashrt_nexus/lib" "$wheel_dir"
 tar --exclude=.git --exclude='build*' --exclude=dist \
   -C "$repo_root" -cf - . | tar -C "$stage_root/source" -xf -
 cp "$stage_root/build"/libcapsule_nexus_flashrt*.so \
+  "$stage_root/source/flashrt_nexus/lib/"
+cp "$stage_root/build/libcapsule_nexus.so" \
   "$stage_root/source/flashrt_nexus/lib/"
 python -m pip wheel --no-build-isolation --no-deps \
   "$stage_root/source" --wheel-dir "$wheel_dir"
