@@ -39,4 +39,5 @@ tar --exclude=.git --exclude='build*' --exclude=dist \
   -C "$repo_root" -cf - . | tar -C "$stage_root/source" -xf -
 cp "$stage_root/build"/libcapsule_nexus_flashrt*.so \
   "$stage_root/source/flashrt_nexus/lib/"
-python -m pip wheel --no-deps "$stage_root/source" --wheel-dir "$wheel_dir"
+python -m pip wheel --no-build-isolation --no-deps \
+  "$stage_root/source" --wheel-dir "$wheel_dir"
