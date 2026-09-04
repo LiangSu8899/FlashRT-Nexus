@@ -7,6 +7,8 @@
  */
 #include "capsule/capsule.h"
 
+extern "C" uint32_t cap_abi_version(void) { return CAP_ABI_VERSION; }
+
 #include <vector>
 #include <cstring>
 #include <cstdint>

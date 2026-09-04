@@ -12,7 +12,7 @@ struct nexus_stage_dag_s {
 
 extern "C" int nexus_stage_dag_create(cap_ctx ctx, cap_model_runtime* model,
                                       nexus_stage_dag** out) {
-    if (!ctx || !model || !out) return CAP_ERR_ARG;
+    if (!model || !out) return CAP_ERR_ARG;
     *out = nullptr;
     auto* h = new (std::nothrow) nexus_stage_dag_s(ctx, model);
     if (!h) return CAP_ERR_NOMEM;

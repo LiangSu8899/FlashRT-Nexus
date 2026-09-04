@@ -2,6 +2,8 @@
 /build-*/
 /build_*/
 __pycache__/
+*.egg-info/
+/dist/
 *.o
 *.a
 *.so

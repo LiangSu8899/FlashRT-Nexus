@@ -7,10 +7,27 @@ import ctypes
 
 CAP_OK = 0
 CAP_TIER_HOST = 1
+NEXUS_AC_IDLE = 0
+NEXUS_AC_PENDING = 1
+NEXUS_AC_READY = 2
+NEXUS_AC_FALLBACK = 3
+NEXUS_AC_ERROR = 4
+
+NEXUS_AC_PREPARE_NONE = 0
+NEXUS_AC_CONSUME_PLAIN = 0
+NEXUS_AC_CONSUME_SWITCH = 1
+NEXUS_AC_CONSUME_TEMPORAL_FUSION = 2
+NEXUS_AC_SWITCH_LATENCY = 0
+NEXUS_AC_MISS_REPORT_ONLY = 0
+NEXUS_AC_MISS_HOLD_LAST = 1
+NEXUS_AC_DTYPE_F32 = 1
+NEXUS_AC_REPR_ABSOLUTE = 0
 FRT_RT_PIXEL_RGB8 = 0
 FRT_RT_DTYPE_F32 = 1
 FRT_RT_DTYPE_F16 = 2
 FRT_RT_DTYPE_BF16 = 3
+FRT_RT_PORT_SWAP = 0
+FRT_RT_PORT_STAGED = 1
 FRT_PI05_DTYPE_BFLOAT16 = 1
 FRT_PI05_DTYPE_FLOAT16 = 2
 FRT_PI05_DTYPE_FLOAT32 = 3
@@ -86,6 +103,45 @@ class CapBoundary(ctypes.Structure):
     ]
 
 
+class NexusActionChunkConfig(ctypes.Structure):
+    """Mirror of the versioned ``nexus_action_chunk_config`` C ABI."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_uint32),
+        ("reserved", ctypes.c_uint32),
+        ("action_stage", ctypes.c_uint64),
+        ("output_port", ctypes.c_uint32),
+        ("chunk_length", ctypes.c_uint32),
+        ("action_bytes", ctypes.c_uint32),
+        ("ring_slots", ctypes.c_uint32),
+        ("execute_horizon", ctypes.c_uint32),
+        ("poll_budget", ctypes.c_int32),
+        ("reserved1", ctypes.c_uint32),
+        ("reserved2", ctypes.c_uint32),
+        ("deadline_steps", ctypes.c_int32),
+        ("prepare_policy", ctypes.c_uint8),
+        ("consume_policy", ctypes.c_uint8),
+        ("switch_mode", ctypes.c_uint8),
+        ("miss_policy", ctypes.c_uint8),
+        ("scalar_dtype", ctypes.c_uint8),
+        ("action_representation", ctypes.c_uint8),
+        ("distance_metric", ctypes.c_uint8),
+        ("experimental", ctypes.c_uint8),
+        ("state_dim", ctypes.c_uint32),
+        ("candidates", ctypes.c_uint32),
+        ("reserved4", ctypes.c_uint32),
+        ("fusion_decay", ctypes.c_double),
+        ("fusion_max_chunks", ctypes.c_uint32),
+        ("switch_offset", ctypes.c_int32),
+        ("lookahead_steps", ctypes.c_uint32),
+        ("state_input_port", ctypes.c_uint32),
+        ("prefix_len", ctypes.c_uint32),
+        ("prev_chunk_port", ctypes.c_uint32),
+        ("raw_out_port", ctypes.c_uint32),
+        ("raw_action_bytes", ctypes.c_uint32),
+    ]
+
+
 def bind_nexus(nx: ctypes.CDLL) -> None:
     p = ctypes.c_void_p
     u64 = ctypes.c_uint64
@@ -93,6 +149,7 @@ def bind_nexus(nx: ctypes.CDLL) -> None:
     i = ctypes.c_int
     c = ctypes.c_char_p
     sigs = {
+        "cap_abi_version": (u32, []),
         "flashrt_adopt_model_runtime": (i, [p, ctypes.POINTER(p)]),
         "flashrt_model_close": (None, [p]),
         "cap_model_backend": (p, [p]),
@@ -103,6 +160,7 @@ def bind_nexus(nx: ctypes.CDLL) -> None:
         "cap_model_port_bytes": (u64, [p, u64]),
         "cap_model_port_update": (u32, [p, u64]),
         "cap_model_stage_stream": (i, [p, u64]),
+        "cap_model_n_stages": (u64, [p]),
         "cap_model_region_array": (p, [p]),
         "cap_model_region_count": (i, [p]),
         "cap_model_set_input": (i, [p, u32, p, u64, i]),
@@ -120,6 +178,28 @@ def bind_nexus(nx: ctypes.CDLL) -> None:
         "cap_restore": (i, [p, p, i]),
         "cap_restore_into": (i, [p, p, ctypes.POINTER(CapRegion), i, i]),
         "cap_capsule_drop": (None, [p, p]),
+        "nexus_stage_dag_create": (i, [p, p, ctypes.POINTER(p)]),
+        "nexus_stage_dag_destroy": (None, [p]),
+        "nexus_stage_dag_fire": (i, [p, u64]),
+        "nexus_stage_dag_query": (i, [p, u64]),
+        "nexus_stage_dag_sync": (i, [p, u64]),
+        "nexus_action_chunk_create": (
+            i, [p, ctypes.POINTER(NexusActionChunkConfig), ctypes.POINTER(p)]),
+        "nexus_action_chunk_destroy": (None, [p]),
+        "nexus_action_chunk_request": (i, [p]),
+        "nexus_action_chunk_poll": (i, [p]),
+        "nexus_action_chunk_next_action": (
+            i, [p, p, u64, ctypes.POINTER(u64)]),
+        "nexus_action_chunk_reset": (None, [p]),
+        "nexus_action_chunk_in_flight": (i, [p]),
+        "nexus_action_chunk_has_active": (i, [p]),
+        "nexus_action_chunk_remaining": (u32, [p]),
+        "nexus_action_chunk_completed": (u64, [p]),
+        "nexus_action_chunk_emitted": (u64, [p]),
+        "nexus_action_chunk_fallbacks": (i, [p]),
+        "nexus_action_chunk_late_chunks": (i, [p]),
+        "nexus_action_chunk_held_actions": (u64, [p]),
+        "nexus_action_chunk_last_error": (i, [p]),
     }
     for name, (restype, argtypes) in sigs.items():
         fn = getattr(nx, name)

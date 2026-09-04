@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flashrt-nexus"
+version = "0.1.0"
+description = "State-first execution and serving substrate for FlashRT"
+readme = "README.md"
+license = {file = "LICENSE"}
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.24"]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+nexus = "flashrt_nexus.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/LiangSu8899/FlashRT-Nexus"
+Repository = "https://github.com/LiangSu8899/FlashRT-Nexus"
+Issues = "https://github.com/LiangSu8899/FlashRT-Nexus/issues"
+
+[tool.setuptools.packages.find]
+include = ["flashrt_nexus*", "serve*"]
+
+[tool.setuptools.package-data]
+flashrt_nexus = ["lib/*.so", "lib/*.dylib", "lib/*.dll"]
