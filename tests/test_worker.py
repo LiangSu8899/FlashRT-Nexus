@@ -6,6 +6,11 @@ import pytest
 from flashrt_nexus import ExecutionWorker
 
 
+def test_factory_error_is_preserved():
+    with pytest.raises(AttributeError, match="missing_factory"):
+        ExecutionWorker("worker_fixture:missing_factory", {})
+
+
 def test_resident_worker_reset_and_failure():
     with ExecutionWorker("worker_fixture:build", {}) as worker:
         assert worker.description["pid"] != os.getpid()

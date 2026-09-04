@@ -16,6 +16,11 @@ from serve.session import (
 
 
 class ServeShellTests(unittest.TestCase):
+    def test_nested_json_and_inline_arrays(self):
+        self.assertEqual(parse_manifest_text('{"views": [1, 2]}'), {"views": [1, 2]})
+        self.assertEqual(parse_manifest_text('views: ["base", "wrist"]'),
+                         {"views": ["base", "wrist"]})
+
     def test_manifest_mapping_is_copied(self):
         os.environ["NEXUS_TEST_CONFIG"] = "pi05"
         source = {"model": {"config": "$NEXUS_TEST_CONFIG"}}

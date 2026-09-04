@@ -145,6 +145,12 @@ class WorkerActionChunks(ActionChunkSession):
         finally:
             self._raise_error()
 
+    def next_action(self):
+        try:
+            return super().next_action()
+        finally:
+            self._raise_error()
+
     def reset(self):
         self.worker.reset()
         super().reset()

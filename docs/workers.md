@@ -46,6 +46,7 @@ cmake -S . -B build
 cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 python tests/gate_worker_chunks.py --nexus build/libcapsule_nexus.so
+tools/build_native_wheel.sh --execution-only
 ```
 
 Pass a library explicitly or install it under `flashrt_nexus/lib`. Native
@@ -55,3 +56,14 @@ The Python native action-chunk host also accepts a single declared stage.
 Split runtimes retain their context/action path. OPAQUE stages remain
 synchronous; use an execution worker when a host call must run off the control
 thread. A pending request is rejected before staging new native inputs.
+
+For Structures exports, `AdoptedRuntime(export, owners=(stage, ...))` provides
+blocking execution of the declared plan inside a worker. The caller retains
+the export and tensors, updates input windows on the producer stream, and
+applies its own output processors after `step()`. `close()` drains Nexus and
+releases its adoption before the caller releases the producer export. This
+path requires a graph-enabled library and compatible FlashRT exec build.
+
+`tests/gate_captured_runtime.py --nexus <graph-library>` validates that bridge
+with a synthetic CUDA graph and changing inputs. It is a contract test, not a
+policy accuracy or acceleration benchmark.

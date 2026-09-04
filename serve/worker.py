@@ -14,11 +14,16 @@ from typing import Any
 _provider = None
 
 
-def _open(entry: str, config: dict) -> None:
+def _open(entry: str, config: dict):
     global _provider
     module, name = entry.split(":", 1)
     with contextlib.redirect_stdout(sys.stderr):
         _provider = getattr(importlib.import_module(module), name)(config)
+        try:
+            return _provider.describe()
+        except BaseException:
+            _provider.close()
+            raise
 
 
 def _call(method: str, payload: bytes | None = None):
@@ -40,12 +45,11 @@ class ExecutionWorker:
         if ":" not in entry:
             raise ValueError("worker entry must use module:callable")
         self._pool = ProcessPoolExecutor(
-            max_workers=1, mp_context=multiprocessing.get_context("spawn"),
-            initializer=_open, initargs=(entry, config))
+            max_workers=1, mp_context=multiprocessing.get_context("spawn"))
         self._pending = None
         self._closed = False
         try:
-            self.description = self._pool.submit(_call, "describe").result()
+            self.description = self._pool.submit(_open, entry, config).result()
         except BaseException:
             self._pool.shutdown(wait=True, cancel_futures=True)
             self._closed = True

@@ -7,6 +7,7 @@ from .manifest import ManifestError, load_manifest
 from .server import serve_deployment
 from .worker import ExecutionWorker
 from .worker_chunks import WorkerActionChunks
+from .adopted import AdoptedRuntime
 
 __version__ = "0.1.0"
 CAPSULE_ABI_VERSION = 1
@@ -18,6 +19,7 @@ __all__ = [
     "EmbeddedSession",
     "ExecutionWorker",
     "WorkerActionChunks",
+    "AdoptedRuntime",
     "ManifestError",
     "find_library",
     "library_abi_version",
