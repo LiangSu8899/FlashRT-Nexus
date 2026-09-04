@@ -36,8 +36,9 @@ logic. External requests are explicit: the host supplies fresh observations.
 Provider-state projection and raw-prefix writes are not exposed by this path.
 Reset waits for the running request, discards its output, resets the provider,
 and clears the chunk mode. Close drains execution. Neither operation promises
-to interrupt a hung provider; worker supervision and alternate Python
-environments are separate follow-up work.
+to interrupt a hung provider. The [independent execution service](execution_service.md)
+supports a separately provisioned provider environment; hard process
+supervision remains an operator responsibility.
 
 The execution-only shared library needs neither FlashRT headers nor CUDA:
 
