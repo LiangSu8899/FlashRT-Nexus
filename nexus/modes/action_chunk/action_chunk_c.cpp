@@ -17,6 +17,9 @@ struct nexus_action_chunk_s {
     nexus_action_chunk_s(nexus::StageDagRunner* runner,
                          const nexus::ActionChunkConfig& cfg)
         : mode(runner, cfg) {}
+    nexus_action_chunk_s(const nexus_action_chunk_executor_v1& executor,
+                         const nexus::ActionChunkConfig& cfg)
+        : mode(executor, cfg) {}
 };
 
 namespace {
@@ -81,6 +84,31 @@ int state(nexus::ActionChunkState s) {
 }
 
 }  // namespace
+
+extern "C" int nexus_action_chunk_create_external(
+        const nexus_action_chunk_executor_v1* executor,
+        const nexus_action_chunk_config* config, nexus_action_chunk** out) {
+    if (!out) return CAP_ERR_ARG;
+    *out = nullptr;
+    if (!executor || executor->struct_size != sizeof(*executor))
+        return CAP_ERR_VERSION;
+    if (!executor->submit || !executor->query || !executor->sync ||
+        !executor->read || !config) return CAP_ERR_ARG;
+    int rc = check_version(config);
+    if (rc != CAP_OK) return rc;
+    const auto cfg = convert(config);
+    rc = nexus::ActionChunkMode::validate(cfg);
+    if (rc != CAP_OK) return rc;
+    // External executors expose completed chunks, not producer state ports.
+    if (cfg.execute_horizon || cfg.prepare_policy != nexus::kActionChunkPrepareNone ||
+        cfg.state_input_port || cfg.raw_out_port || cfg.prev_chunk_port ||
+        cfg.output_port == UINT32_MAX || !cfg.chunk_length || !cfg.action_bytes)
+        return CAP_ERR_ARG;
+    auto* h = new (std::nothrow) nexus_action_chunk_s(*executor, cfg);
+    if (!h) return CAP_ERR_NOMEM;
+    *out = h;
+    return CAP_OK;
+}
 
 extern "C" int nexus_action_chunk_create(
         nexus_stage_dag* runner,

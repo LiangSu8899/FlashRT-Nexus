@@ -39,6 +39,26 @@ target_include_directories(nexus_l2
   PRIVATE core/include host/include)
 target_link_libraries(nexus_l2 PUBLIC capsule_core capsule_host)
 
+# Loadable execution/mode surface without a FlashRT or CUDA dependency.
+add_library(capsule_nexus SHARED
+  core/src/capsule.cpp
+  host/src/model_runtime.cpp
+  nexus/schedulers/stage_dag.cpp
+  nexus/schedulers/stage_dag_c.cpp
+  nexus/embedded/session.cpp
+  nexus/modes/action_chunk/action_chunk.cpp
+  nexus/modes/action_chunk/action_chunk_c.cpp)
+target_include_directories(capsule_nexus PRIVATE . core/include host/include)
+install(TARGETS capsule_nexus LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
+
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME python_worker_chunks
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/gate_worker_chunks.py
+      --nexus $<TARGET_FILE:capsule_nexus>)
+endif()
+
 # ---- L0: a host reference backend (for tests / CI; no GPU) ------------------
 add_library(capsule_backend_stub STATIC backends/stub/stub_backend.cpp)
 target_include_directories(capsule_backend_stub
@@ -131,6 +151,11 @@ if(CAPSULE_BUILD_FLASHRT_MODEL_ABI)
         --provider $<TARGET_FILE:test_robot_model_provider>)
     set_tests_properties(python_native_embedded PROPERTIES
       ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+    add_test(NAME python_native_single_stage
+      COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/gate_native_embedded.py
+        --nexus $<TARGET_FILE:capsule_nexus_flashrt_abi>
+        --provider $<TARGET_FILE:test_robot_model_provider> --single-stage)
   endif()
   add_test(NAME model_adapter_architecture
     COMMAND ${CMAKE_COMMAND}

@@ -30,6 +30,7 @@
 #define NEXUS_MODES_ACTION_CHUNK_H
 
 #include "nexus/schedulers/stage_dag.h"
+#include "nexus/modes/action_chunk/action_chunk_c.h"
 
 #include <cstdint>
 #include <vector>
@@ -139,6 +140,8 @@ public:
 
     ActionChunkMode(StageDagRunner* runner,
                     const ActionChunkConfig& config);
+    ActionChunkMode(const nexus_action_chunk_executor_v1& executor,
+                    const ActionChunkConfig& config);
     ActionChunkMode(StageDagRunner* runner, uint64_t action_stage,
                     int max_pending_polls);
 
@@ -220,6 +223,7 @@ private:
     int state_index(const unsigned char* chunk, uint32_t* out) const;
 
     StageDagRunner* runner_ = nullptr;
+    nexus_action_chunk_executor_v1 external_{};
     ActionChunkConfig config_{};
     uint64_t chunk_bytes_ = 0;
     std::vector<unsigned char> storage_;

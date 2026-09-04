@@ -65,7 +65,10 @@ int frt_model_runtime_open_v1(const char* config_json,
                               frt_model_runtime_v1** out) {
     if (!out) return -1;
     *out = nullptr;
-    if (!config_json || std::strcmp(config_json, "{\"fixture\":true}") != 0)
+    const bool single = config_json &&
+        std::strcmp(config_json, "{\"fixture\":true,\"single_stage\":true}") == 0;
+    if (!config_json || (!single &&
+            std::strcmp(config_json, "{\"fixture\":true}") != 0))
         return -1;
     auto* owner = new (std::nothrow) Owner();
     if (!owner) return -5;
@@ -80,6 +83,10 @@ int frt_model_runtime_open_v1(const char* config_json,
                         owner->action_after};
     owner->plan = {FRT_GENERIC_STAGE_PLAN_ABI_VERSION, sizeof(owner->plan),
                    owner->stages, 2, owner, run_opaque};
+    if (single) {
+        owner->stages[0] = {"infer", FRT_GENERIC_STAGE_OPAQUE, 20, 0, nullptr};
+        owner->plan.n_stages = 1;
+    }
     owner->exp.abi_version = FRT_RUNTIME_ABI_VERSION;
     owner->exp.struct_size = sizeof(owner->exp);
     owner->exp.fingerprint = 0x4d4f4e;
