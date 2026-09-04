@@ -22,6 +22,8 @@ class Provider:
         return np.full((3, 2), inputs.get("value", self.calls), dtype=np.float32)
 
     def reset(self):
+        if self.config.get("fail_reset"):
+            raise RuntimeError("fixture reset failure")
         self.calls = 0
 
     def close(self):
