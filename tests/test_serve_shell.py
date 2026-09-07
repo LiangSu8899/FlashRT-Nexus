@@ -1,10 +1,13 @@
 import base64
 import os
+import tempfile
 import unittest
+from pathlib import Path
 
 import numpy as np
 
-from serve.manifest import parse_manifest_text
+from flashrt_nexus.library import find_library
+from serve.manifest import load_manifest, parse_manifest_text
 from serve.session import (
     decode_images,
     normalize_image_arrays,
@@ -13,6 +16,20 @@ from serve.session import (
 
 
 class ServeShellTests(unittest.TestCase):
+    def test_manifest_mapping_is_copied(self):
+        os.environ["NEXUS_TEST_CONFIG"] = "pi05"
+        source = {"model": {"config": "$NEXUS_TEST_CONFIG"}}
+        loaded = load_manifest(source)
+        self.assertEqual(loaded["model"]["config"], "pi05")
+        loaded["model"]["config"] = "changed"
+        self.assertEqual(source["model"]["config"], "$NEXUS_TEST_CONFIG")
+
+    def test_explicit_library_is_resolved(self):
+        with tempfile.TemporaryDirectory() as directory:
+            library = Path(directory) / "libnexus.so"
+            library.touch()
+            self.assertEqual(find_library(library), str(library.resolve()))
+
     def test_manifest_env_and_nested_scalars(self):
         os.environ["PI05_CHECKPOINT"] = "/tmp/pi05"
         data = parse_manifest_text(
