@@ -1,5 +1,9 @@
 # Resident execution workers
 
+Install the appropriate wheel using [Usage](usage.md) before running these APIs.
+Python programs that create spawned workers must call their entrypoint under
+`if __name__ == "__main__":`; the snippet below belongs inside that entrypoint.
+
 External workers expose completed action chunks, not model-runtime state ports.
 The external executor accepts only prepare-none: projected-state and RTC prefix
 preparation are not supported on this path. Native runtimes with declared ports

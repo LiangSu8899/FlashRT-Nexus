@@ -1,5 +1,9 @@
 # Independent execution service
 
+Start with [installation and verification](usage.md). Both client and server
+need compatible Nexus interfaces; only the server needs the model provider and
+its assets. A merged source revision is not a package release.
+
 `execution_http` exposes the existing worker lifecycle, not a second model
 scheduler. It accepts a local worker factory or wraps an existing model-runtime
 deployment. The provider owns preprocessing, model execution and postprocessing.
