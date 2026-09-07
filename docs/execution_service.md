@@ -69,6 +69,10 @@ outstanding-request state. Authenticated POST endpoints under
 | `release` | Invalidate the lease and drain/reset before another acquisition |
 
 Clients use fresh request IDs and never retry mutating operations automatically.
+Any failed execute latches the client into recovery-required state, including a
+lost acknowledgement response after the server has already discarded a result.
+Further execute calls fail locally until explicit reset succeeds or the client
+is replaced. A failed reset preserves that latch; close is terminal.
 A lost submit response is ambiguous: reset explicitly or release/reopen; do not
 submit the action twice. Process restart changes the epoch. Old clients cannot
 consume a new service's results. Idle lease expiry also requires a new session;

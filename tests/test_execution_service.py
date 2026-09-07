@@ -152,7 +152,7 @@ def test_lost_submit_response_requires_explicit_reset(endpoint, monkeypatch):
         with pytest.raises(RemoteExecutionError, match="lost response"):
             client.execute({"value": 99, "delay": 0.1})
         client._call = call
-        with pytest.raises(RemoteExecutionError, match="409"):
+        with pytest.raises(RemoteExecutionError, match="explicit reset"):
             client.execute({"value": 2})
         client.reset()
         np.testing.assert_array_equal(client.execute({}), 1)
@@ -171,3 +171,33 @@ def test_failed_reset_never_admits_new_work():
             service.acquire()
     finally:
         service.close()
+
+
+def test_lost_ack_response_latches_recovery(endpoint, monkeypatch):
+    monkeypatch.setenv("NEXUS_TEST_TOKEN", "test-token")
+    client = RemoteProvider({"url": endpoint, "token_env": "NEXUS_TEST_TOKEN"})
+    call = client._call
+    calls = []
+
+    def lost_reply(method, body):
+        calls.append(method)
+        result = call(method, body)
+        if method == 'ack':
+            raise RemoteExecutionError('lost ack response')
+        return result
+
+    try:
+        client._call = lost_reply
+        with pytest.raises(RemoteExecutionError, match='lost ack'):
+            client.execute({'value': 9})
+        before = len(calls)
+        with pytest.raises(RemoteExecutionError, match='explicit reset'):
+            client.execute({'value': 2})
+        assert len(calls) == before
+        client._call = call
+        client.reset()
+        np.testing.assert_array_equal(client.execute({'value': 3}), 3)
+    finally:
+        client.close()
+    with pytest.raises(RemoteExecutionError):
+        client.execute({})

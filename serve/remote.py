@@ -40,6 +40,7 @@ class RemoteProvider:
         if self.lease.get("version") != 1:
             raise RemoteExecutionError("unsupported execution protocol")
         self._closed = False
+        self._needs_reset = False
 
     def _call(self, method, body):
         headers = {"Content-Type": "application/json"}
@@ -65,6 +66,15 @@ class RemoteProvider:
         return {**self.lease["description"], "transport": "execution_http"}
 
     def execute(self, inputs):
+        if self._closed or self._needs_reset:
+            raise RemoteExecutionError("remote execution requires explicit reset or a new session")
+        try:
+            return self._execute(inputs)
+        except Exception:
+            self._needs_reset = True
+            raise
+
+    def _execute(self, inputs):
         request = uuid.uuid4().hex
         body = self._body(request=request)
         self._call("submit", {**body, "inputs": inputs})
@@ -84,10 +94,14 @@ class RemoteProvider:
         raise TimeoutError("remote execution deadline exceeded")
 
     def reset(self):
+        if self._closed:
+            raise RemoteExecutionError("remote provider is closed")
+        self._needs_reset = True
         self._call("reset", self._body())
         deadline = time.monotonic() + self.execution_timeout
         while time.monotonic() < deadline:
             if self._call("status", self._body())["state"] == "idle":
+                self._needs_reset = False
                 return
             time.sleep(self.poll_interval)
         raise TimeoutError("remote reset deadline exceeded")
