@@ -83,6 +83,22 @@ The authoritative spec is the C ABI header
 
 ## Quickstart
 
+Start with [installation and deployment usage](docs/usage.md). Choose an
+execution-only wheel for ecosystem workers, an ABI-only wheel for compatible
+provider-only runtimes, or a graph-enabled wheel for FlashRT graph adoption.
+Installing Nexus does not install model weights, provider frameworks or robot SDKs.
+
+After installing the selected wheel and a provider, start its independent service:
+
+```sh
+nexus serve deployment.yaml
+```
+
+`deployment.yaml` is your configured manifest. See the
+[execution-service guide](docs/execution_service.md) for its worker schema,
+client connection, authentication and explicit recovery contract. That protocol
+is distinct from the older Act API demo below.
+
 ### HTTP demo
 
 Start a Pi0.5 action endpoint from a deployment manifest:
@@ -110,7 +126,7 @@ python examples/pi05_embedded.py examples/pi05_libero.yaml
 python tests/gate_pi05_embedded.py --iters 32
 ```
 
-The Python embedded API is [`serve.embedded.EmbeddedSession`](docs/embedded.md):
+The public Python embedded API is [`flashrt_nexus.EmbeddedSession`](docs/embedded.md):
 it accepts image/state arrays directly and returns action arrays without
 JSON/base64/socket/list-conversion overhead.
 
@@ -122,6 +138,10 @@ maps incoming buffers to `nexus_embedded_input[]`, maps action destinations to
 tick.
 
 ## Documentation
+
+- [`docs/usage.md`](docs/usage.md): wheel selection, installation, no-GPU gates and deployment entrypoints.
+- [`docs/workers.md`](docs/workers.md): resident providers and action-chunk contracts.
+- [`docs/execution_service.md`](docs/execution_service.md): independent serving, remote clients and failure recovery.
 
 - [`docs/changes.md`](docs/changes.md): compatibility and migration notes.
 - [`docs/serve.md`](docs/serve.md): HTTP transport, Act API, manifest, demo deployment.

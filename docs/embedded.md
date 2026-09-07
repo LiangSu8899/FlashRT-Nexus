@@ -7,7 +7,7 @@ deployment session:
 SETUP -> EXPORT -> ADOPT -> WARM -> SERVE -> DRAIN
 ```
 
-`serve.embedded.EmbeddedSession` opens the same manifest as `nexus serve`, but
+`flashrt_nexus.EmbeddedSession` opens the same manifest as `nexus serve`, but
 the application calls the session directly with image/state buffers. There is
 no HTTP server, JSON parse, base64 decode, or socket hop on this path.
 Actions are returned as a NumPy array, not JSON-shaped lists; conversion belongs
@@ -28,7 +28,7 @@ For a C++ robot loop or transport adapter, use
 ```python
 import numpy as np
 
-from serve.embedded import EmbeddedSession
+from flashrt_nexus import EmbeddedSession
 
 with EmbeddedSession.open("examples/pi05_libero.yaml") as nx:
     images = [np.zeros((224, 224, 3), dtype=np.uint8) for _ in range(3)]
@@ -52,6 +52,33 @@ The API surface is intentionally small:
 | `snapshot(name)` | freeze current model regions into a named capsule |
 | `reset(name)` | restore a named capsule |
 | `close()` | release the adopted model/session |
+
+## Action-chunk lifecycle
+
+`session.action_chunks(execute_horizon=4)` creates a controller for a compatible
+action-producing runtime. Call `request(images, state=..., prompt=...)` explicitly
+with fresh observations, then poll and consume actions. Overlapping requests are
+rejected before input buffers are changed. `execute_horizon` is a request
+threshold, not the model's output length.
+
+The controller's `reset()` drains GRAPH stages before clearing chunk state;
+its `close()` drains before releasing the mode and DAG. OPAQUE stages are
+synchronous and complete on return. A failed graph drain raises rather than
+releasing resources that may still be in use. The host must serialize lifecycle
+and control calls; these operations do not cancel a hung device operation.
+
+These reset operations are distinct:
+
+| Entry | Meaning |
+|---|---|
+| `EmbeddedSession.reset(capsule)` | Restore a supported model-state capsule; not a universal episode reset |
+| Native action-chunk controller `reset()` | Drain execution and clear chunk state; does not reset arbitrary policy internals |
+| Worker controller `reset()` | Drain execution, call provider reset and clear chunks |
+| Remote Native provider reset | Close and reopen the deployment, potentially reloading weights and recapturing |
+
+Snapshot/restore requires supported state capabilities. Do not interleave direct
+`act`, snapshot or capsule restore with an active action-chunk loop. See
+[worker contracts](workers.md) and [remote recovery](execution_service.md).
 
 `images` are `uint8` HWC RGB arrays. The producer determines how many views are
 required and whether `state` or `prompt` are dynamic ports. If a port was not
