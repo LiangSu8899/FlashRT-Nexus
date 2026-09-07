@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from flashrt_nexus.library import find_library
+from .library import find_library
 from .action_chunk import ActionChunkOptions, ActionChunkSession, _CONSUME
 from .ffi import NexusActionChunkConfig, bind_nexus
 from .worker import ExecutionWorker
@@ -153,7 +153,7 @@ class WorkerActionChunks(ActionChunkSession):
 
     def reset(self):
         self.worker.reset()
-        super().reset()
+        self.nx.nexus_action_chunk_reset(self._mode)
         self._error = None
         self._output = None
 
@@ -164,3 +164,7 @@ class WorkerActionChunks(ActionChunkSession):
                     self.worker.result()
             finally:
                 super().close()
+
+    def _drain(self):
+        # close/reset already drain the worker; no native DAG is owned here.
+        pass

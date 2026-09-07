@@ -128,6 +128,7 @@ class ActionChunkSession:
     def close(self) -> None:
         if self._closed:
             return
+        self._drain()
         if self._mode:
             self.nx.nexus_action_chunk_destroy(self._mode)
             self._mode = ctypes.c_void_p()
@@ -164,6 +165,8 @@ class ActionChunkSession:
                 prompt: str | None = None, seed: int | None = None) -> None:
         """Stage the latest observation and request its next action chunk."""
         with self.session.lock:
+            if self._closed:
+                raise RuntimeError("action chunk controller is closed")
             if self.in_flight:
                 raise RuntimeError("an action chunk request is already in flight")
             self.session._stage_arrays_locked(
@@ -215,8 +218,22 @@ class ActionChunkSession:
                 f"action chunk next_action state={state} written={written.value}")
         return action
 
+    def _drain(self) -> None:
+        # Drain every declared stage, including a context whose action failed.
+        if self._dag:
+            for stage in range(self.nx.cap_model_n_stages(self.session.model)):
+                if self.nx.cap_model_stage_executor_kind(self.session.model, stage) == 1:
+                    continue  # OPAQUE calls are complete on return.
+                rc = self.nx.nexus_stage_dag_sync(self._dag, stage)
+                if rc != CAP_OK:
+                    raise RuntimeError(f"stage drain rc={rc}")
+
     def reset(self) -> None:
-        self.nx.nexus_action_chunk_reset(self._mode)
+        if self._closed:
+            raise RuntimeError("action chunk controller is closed")
+        with self.session.lock:
+            self._drain()
+            self.nx.nexus_action_chunk_reset(self._mode)
 
     def stats(self) -> dict[str, int]:
         return {

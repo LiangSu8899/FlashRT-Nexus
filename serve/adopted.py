@@ -2,7 +2,7 @@
 
 import ctypes
 
-from flashrt_nexus.library import find_library
+from .library import find_library
 from .ffi import bind_nexus
 
 
