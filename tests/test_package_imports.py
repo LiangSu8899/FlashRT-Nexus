@@ -7,6 +7,7 @@ import pytest
 
 
 @pytest.mark.parametrize('module', ['serve.deployment', 'serve.library',
-                                  'flashrt_nexus', 'flashrt_nexus.library'])
+                                  'flashrt_nexus', 'flashrt_nexus.library',
+                                  'serve.worker_chunks', 'serve.adopted'])
 def test_fresh_import(module):
     subprocess.run([sys.executable, '-c', f'import {module}'], check=True)

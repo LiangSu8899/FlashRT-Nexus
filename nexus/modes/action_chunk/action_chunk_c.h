@@ -20,6 +20,21 @@ extern "C" {
 
 #define NEXUS_AC_NO_OUTPUT_PORT 0xffffffffu
 
+/* External asynchronous execution. Callbacks are serialized on the driving
+ * host thread; submit/query must not wait for inference. query returns zero
+ * when output is ready, positive while pending, negative on failure. read
+ * copies the completed chunk, sync explicitly waits. The owner must outlive
+ * the mode and drain work before destroy/reset. Requests are always explicit
+ * so the host can supply fresh inputs. No cancellation is implied. */
+typedef struct nexus_action_chunk_executor_v1 {
+    uint32_t struct_size;
+    void* self;
+    int (*submit)(void* self);
+    int (*query)(void* self);
+    int (*sync)(void* self);
+    int (*read)(void* self, void* out, uint64_t capacity, uint64_t* written);
+} nexus_action_chunk_executor_v1;
+
 enum nexus_action_chunk_state {
     NEXUS_AC_IDLE = 0,
     NEXUS_AC_PENDING = 1,
@@ -103,6 +118,10 @@ typedef struct nexus_action_chunk_config {
 } nexus_action_chunk_config;
 
 typedef struct nexus_action_chunk_s nexus_action_chunk;
+
+int nexus_action_chunk_create_external(
+    const nexus_action_chunk_executor_v1*,
+    const nexus_action_chunk_config*, nexus_action_chunk**);
 
 int  nexus_action_chunk_create(nexus_stage_dag*,
                                const nexus_action_chunk_config*,

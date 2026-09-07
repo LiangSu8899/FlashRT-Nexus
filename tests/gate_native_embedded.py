@@ -19,6 +19,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--nexus", required=True)
     parser.add_argument("--provider", required=True)
+    parser.add_argument("--single-stage", action="store_true")
     args = parser.parse_args()
     manifest = {
         "model": {"chunk": 2, "action_dim": 2, "num_views": 1},
@@ -30,6 +31,8 @@ def main() -> int:
         },
     }
     image = np.zeros((4, 4, 3), dtype=np.uint8)
+    if args.single_stage:
+        manifest["producer"]["config"]["single_stage"] = True
     with EmbeddedSession.open(manifest) as session:
         result = session.act([image])
         if result.actions.shape != (2, 2) or result.actions[1, 1] != 4:

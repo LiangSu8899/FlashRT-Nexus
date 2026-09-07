@@ -15,7 +15,8 @@ _LIBRARY_NAMES = (
 )
 
 
-def find_library(explicit: str | os.PathLike[str] | None = None) -> str:
+def find_library(explicit: str | os.PathLike[str] | None = None, *,
+                 execution_only: bool = False) -> str:
     """Return a loadable Nexus library name or path.
 
     Resolution order is explicit path, ``NEXUS_LIB``, installed package/prefix,
@@ -38,12 +39,15 @@ def find_library(explicit: str | os.PathLike[str] | None = None) -> str:
         checkout / "build",
         checkout / "build-release",
     )
-    candidates = tuple(root / name for root in roots for name in _LIBRARY_NAMES)
+    names = (("libcapsule_nexus.so",) + _LIBRARY_NAMES
+             if execution_only else _LIBRARY_NAMES)
+    candidates = tuple(root / name for root in roots for name in names)
     for path in candidates:
         if path.is_file() and _exports_abi_version(path):
             return str(path.resolve())
 
-    for name in ("capsule_nexus_flashrt", "capsule_nexus_flashrt_abi"):
+    for filename in names:
+        name = filename.removeprefix("lib").removesuffix(".so")
         resolved = ctypes.util.find_library(name)
         if resolved:
             return resolved
