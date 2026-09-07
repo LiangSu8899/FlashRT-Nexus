@@ -1,5 +1,13 @@
 # Resident execution workers
 
+External workers expose completed action chunks, not model-runtime state ports.
+The external executor accepts only prepare-none: projected-state and RTC prefix
+preparation are not supported on this path. Native runtimes with declared ports
+can use their separate prepare mechanisms; worker support is not equivalent.
+Requests are explicit, including before blocking sync. Sync never submits a new
+external request with missing or stale inputs. Reset drains execution before
+clearing chunks; it is not cancellation of GPU work.
+
 `ExecutionWorker` loads a user factory in one spawned Python process. The
 factory returns an object implementing `describe()`, `execute(inputs)`,
 `reset()`, and `close()`. Loading and device initialization happen in that

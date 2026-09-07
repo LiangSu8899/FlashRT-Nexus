@@ -20,8 +20,13 @@ def main():
         chunks = WorkerActionChunks(worker, nexus_lib=args.nexus,
                                     execute_horizon=1, deadline_steps=1)
         try:
+            assert chunks.nx.nexus_action_chunk_sync_next_chunk(chunks._mode) == 4
+            assert not chunks.in_flight
             chunks.request_inputs({"value": 2})
-            chunks.wait_ready(5)
+            deadline = time.monotonic() + 5
+            while not worker.ready:
+                assert time.monotonic() < deadline
+                time.sleep(0.001)
             np.testing.assert_array_equal(chunks.next_action(), [2, 2])
             started = time.monotonic()
             chunks.request_inputs({"value": 3, "delay": 0.2})
