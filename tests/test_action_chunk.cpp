@@ -1183,7 +1183,23 @@ static void test_c_abi_new_verbs() {
     nexus_stage_dag_destroy(dag);
 }
 
+static void test_ready_writes_action() {
+    Fixture f(false);
+    nexus::StageDagRunner runner(f.ctx, &f.model);
+    prime_context(runner);
+    nexus::ActionChunkMode mode(&runner, chunk_config());
+    CHECK(mode.request() == CAP_OK, "request before direct consume");
+    unsigned char out[4] = {};
+    uint64_t written = 0;
+    CHECK(mode.next_action(out, sizeof(out), &written) ==
+              nexus::ActionChunkState::kReady,
+          "completion inside next_action is ready");
+    CHECK(written == 4 && std::memcmp(out, "ABCD", 4) == 0,
+          "ready writes the first action before returning");
+}
+
 int main() {
+    test_ready_writes_action();
     test_config_versioning();
     test_two_phase_request();
     test_dual_clocks();

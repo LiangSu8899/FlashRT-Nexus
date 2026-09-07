@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from os import PathLike
 from typing import Any
 
-from flashrt_nexus.library import find_library
+from .library import find_library
 
 from .manifest import get_section, load_manifest, optional_str
 from .producers import ProducerHandle, build_producer
