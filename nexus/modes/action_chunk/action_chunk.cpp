@@ -423,7 +423,8 @@ ActionChunkState ActionChunkMode::next_action(void* out, uint64_t capacity,
             }
         }
         ActionChunkState s = poll();
-        if (s == ActionChunkState::kReady) return s;
+        if (s == ActionChunkState::kReady)
+            return next_action(out, capacity, written);
         if (config_.miss_policy == kActionChunkMissHoldLast && has_held_) {
             if (capacity < config_.action_bytes) {
                 last_error_ = CAP_ERR_ARG;
@@ -472,6 +473,10 @@ int ActionChunkMode::advance_step() {
 ActionChunkState ActionChunkMode::sync_next_chunk() {
     if (!external_.sync && (!runner_ || !runner_->ok())) return ActionChunkState::kError;
     if (!in_flight_) {
+        if (external_.submit) {
+            last_error_ = CAP_ERR_ARG;
+            return ActionChunkState::kError;
+        }
         int rc = request();
         if (rc != CAP_OK) {
             last_error_ = rc;

@@ -161,6 +161,7 @@ def bind_nexus(nx: ctypes.CDLL, *, model_runtime: bool = True) -> None:
         "cap_model_port_update": (u32, [p, u64]),
         "cap_model_stage_stream": (i, [p, u64]),
         "cap_model_n_stages": (u64, [p]),
+        "cap_model_stage_executor_kind": (u32, [p, u64]),
         "cap_model_region_array": (p, [p]),
         "cap_model_region_count": (i, [p]),
         "cap_model_set_input": (i, [p, u32, p, u64, i]),
